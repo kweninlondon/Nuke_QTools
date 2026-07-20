@@ -127,6 +127,33 @@ def _target_matches_source_label(target, source):
     )
 
 
+def _target_source_text(target):
+    """Return source text from a target label such as "To CAMERA"."""
+    if "label" not in target.knobs():
+        return ""
+
+    label = _clean_text(target["label"].value())
+
+    if not label.lower().startswith("to "):
+        return ""
+
+    return label[3:].strip()
+
+
+def _source_dot_matching_text(source_text, excluded_nodes=None):
+    """Return a labelled Dot matching source_text."""
+    source_text = _normalised_label(source_text)
+
+    if not source_text:
+        return None
+
+    for dot in _labelled_dots(excluded_nodes=excluded_nodes):
+        if _normalised_label(_node_display_text(dot)) == source_text:
+            return dot
+
+    return None
+
+
 def _deselect_all():
     """Deselect every currently selected node."""
     for node in nuke.selectedNodes():
@@ -317,6 +344,67 @@ def _reconnect_matching_disconnected_targets(source, excluded_nodes=None):
         targets=targets,
         source=source
     )
+
+
+def _ask_to_reconnect_targets(source, targets):
+    """Ask whether matching disconnected targets should be reconnected."""
+    if not targets:
+        return False
+
+    count = len(targets)
+    plural = "s" if count != 1 else ""
+
+    return nuke.ask(
+        "Found {count} disconnected connector{plural} labelled {label}.\n\n"
+        "Reconnect instead of creating a new PostageStamp?".format(
+            count=count,
+            plural=plural,
+            label=_connection_label(source)
+        )
+    )
+
+
+def _reconnect_source_dot_targets_if_confirmed(source, excluded_nodes=None):
+    """Reconnect targets matching source only when the user confirms."""
+    targets = _disconnected_targets_matching_source(
+        source,
+        excluded_nodes=excluded_nodes
+    )
+
+    if not _ask_to_reconnect_targets(source, targets):
+        return 0
+
+    return _retarget_nodes(
+        targets=targets,
+        source=source
+    )
+
+
+def _reconnect_selected_disconnected_targets(targets):
+    """Reconnect selected disconnected targets based on their existing labels."""
+    successful = 0
+
+    for target in targets:
+        if target.Class() not in SUPPORTED_TARGET_CLASSES:
+            continue
+
+        if not _node_has_no_input(target):
+            continue
+
+        source = _source_dot_matching_text(
+            _target_source_text(target),
+            excluded_nodes=targets
+        )
+
+        if source is None:
+            continue
+
+        successful += _retarget_nodes(
+            targets=[target],
+            source=source
+        )
+
+    return successful
 
 
 def _retarget_nodes(targets, source):
@@ -729,14 +817,21 @@ def create_or_retarget_postage_stamp():
     """
     selected_nodes = list(nuke.selectedNodes())
 
+    reconnected = _reconnect_selected_disconnected_targets(selected_nodes)
+
+    if reconnected:
+        return reconnected
+
     if len(selected_nodes) == 1 and selected_nodes[0].Class() == "Dot":
-        reconnected = _reconnect_matching_disconnected_targets(
+        reconnected = _reconnect_source_dot_targets_if_confirmed(
             selected_nodes[0],
             excluded_nodes=selected_nodes
         )
 
         if reconnected:
             return reconnected
+
+        return _create_postage_stamp(selected_nodes[0])
 
     if _all_selected_are_retargetable(selected_nodes):
         source = _choose_source(
