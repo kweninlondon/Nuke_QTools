@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+
+# Nuke-generated and user-specific files
+*.autosave
+*.tmp
+preferences*.nk
+uistate.ini
+ViewerCache/
+DiskCache/
+
+# Render output should not live in the tools repository
+renders/
+
