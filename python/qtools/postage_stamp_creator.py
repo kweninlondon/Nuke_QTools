@@ -103,6 +103,30 @@ def _connection_label(source):
     return "To {}".format(_node_display_text(source))
 
 
+def _normalised_label(value):
+    """Return label text normalized for matching."""
+    return _clean_text(value).lower()
+
+
+def _node_has_no_input(node):
+    """Return True when input 0 is disconnected."""
+    try:
+        return node.input(0) is None
+    except Exception:
+        return False
+
+
+def _target_matches_source_label(target, source):
+    """Return True when target is labelled as a connector to source."""
+    if "label" not in target.knobs():
+        return False
+
+    return (
+        _normalised_label(target["label"].value())
+        == _normalised_label(_connection_label(source))
+    )
+
+
 def _deselect_all():
     """Deselect every currently selected node."""
     for node in nuke.selectedNodes():
@@ -240,6 +264,59 @@ def _create_postage_stamp(source):
     stamp.setSelected(True)
 
     return stamp
+
+
+def _disconnected_targets_matching_source(source, excluded_nodes=None):
+    """
+    Return disconnected Dot/PostageStamp nodes labelled as connectors to source.
+    """
+    if source is None:
+        return []
+
+    excluded_nodes = set(excluded_nodes or [])
+    targets = []
+
+    for node_class in sorted(SUPPORTED_TARGET_CLASSES):
+        for node in nuke.allNodes(node_class):
+            if node is source or node in excluded_nodes:
+                continue
+
+            if not _node_has_no_input(node):
+                continue
+
+            if not _target_matches_source_label(node, source):
+                continue
+
+            targets.append(node)
+
+    return sorted(
+        targets,
+        key=lambda node: (
+            node.ypos(),
+            node.xpos(),
+            node.name().lower(),
+        )
+    )
+
+
+def _reconnect_matching_disconnected_targets(source, excluded_nodes=None):
+    """
+    Reconnect disconnected targets whose labels still point to source.
+
+    Returns the number of successfully reconnected nodes.
+    """
+    targets = _disconnected_targets_matching_source(
+        source,
+        excluded_nodes=excluded_nodes
+    )
+
+    if not targets:
+        return 0
+
+    return _retarget_nodes(
+        targets=targets,
+        source=source
+    )
 
 
 def _retarget_nodes(targets, source):
@@ -652,6 +729,15 @@ def create_or_retarget_postage_stamp():
     """
     selected_nodes = list(nuke.selectedNodes())
 
+    if len(selected_nodes) == 1 and selected_nodes[0].Class() == "Dot":
+        reconnected = _reconnect_matching_disconnected_targets(
+            selected_nodes[0],
+            excluded_nodes=selected_nodes
+        )
+
+        if reconnected:
+            return reconnected
+
     if _all_selected_are_retargetable(selected_nodes):
         source = _choose_source(
             excluded_nodes=selected_nodes
@@ -671,12 +757,25 @@ def create_or_retarget_postage_stamp():
         except Exception:
             source = selected_nodes[-1]
 
+        reconnected = _reconnect_matching_disconnected_targets(
+            source,
+            excluded_nodes=selected_nodes
+        )
+
+        if reconnected:
+            return reconnected
+
         return _create_postage_stamp(source)
 
     source = _choose_source()
 
     if source is None:
         return None
+
+    reconnected = _reconnect_matching_disconnected_targets(source)
+
+    if reconnected:
+        return reconnected
 
     return _create_postage_stamp(source)
 
