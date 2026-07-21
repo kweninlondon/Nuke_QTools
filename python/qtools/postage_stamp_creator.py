@@ -60,9 +60,9 @@ import re
 import nuke
 
 try:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError:
-    from PySide2 import QtCore, QtWidgets
+    from PySide2 import QtCore, QtGui, QtWidgets
 
 
 SUPPORTED_TARGET_CLASSES = {
@@ -708,11 +708,27 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
 
         title_layout = QtWidgets.QHBoxLayout()
-        self.cleanup_button = QtWidgets.QPushButton("🔨")
+        self.cleanup_button = QtWidgets.QPushButton()
         cleanup_button_size = self.cleanup_button.sizeHint().height()
         self.cleanup_button.setFixedSize(
             cleanup_button_size,
             cleanup_button_size
+        )
+        broom_icon_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "icons",
+                "broom.svg"
+            )
+        )
+        self.cleanup_button.setIcon(QtGui.QIcon(broom_icon_path))
+        self.cleanup_button.setIconSize(
+            QtCore.QSize(
+                cleanup_button_size - 8,
+                cleanup_button_size - 8
+            )
         )
         self.cleanup_button.setToolTip(
             "Close this source picker and open Connector Label clean up."
