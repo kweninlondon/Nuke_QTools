@@ -822,7 +822,14 @@ def create_or_retarget_postage_stamp():
     if reconnected:
         return reconnected
 
-    if len(selected_nodes) == 1 and selected_nodes[0].Class() == "Dot":
+    if (
+        len(selected_nodes) == 1
+        and selected_nodes[0].Class() == "Dot"
+        and not (
+            _node_has_no_input(selected_nodes[0])
+            and not _clean_text(selected_nodes[0]["label"].value())
+        )
+    ):
         reconnected = _reconnect_source_dot_targets_if_confirmed(
             selected_nodes[0],
             excluded_nodes=selected_nodes
