@@ -720,7 +720,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                 "..",
                 "..",
                 "icons",
-                "broom.svg"
+                "connector_cleanup.svg"
             )
         )
         self.cleanup_button.setIcon(QtGui.QIcon(broom_icon_path))
@@ -969,7 +969,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.reject()
         QtCore.QTimer.singleShot(
             0,
-            connector_label_cleanup.clean_up_connector_labels
+            lambda: connector_label_cleanup.clean_up_connector_labels(
+                on_close=create_or_retarget_postage_stamp
+            )
         )
 
     def _restore_graph_view(self):

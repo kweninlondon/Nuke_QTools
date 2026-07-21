@@ -272,10 +272,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
     HEADERS = ["Update", "Change", "Conflict resolution"]
 
-    def __init__(self, safe, conflicts, unnamed, parent=None):
+    def __init__(self, safe, conflicts, unnamed, on_close=None, parent=None):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
+        self._on_close = on_close
+        self._skip_on_close = False
         self._original_zoom = nuke.zoom()
         self._original_center = list(nuke.center())
         self._original_selection = list(nuke.selectedNodes())
@@ -320,6 +322,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         ))
         header_layout.addStretch()
         self.reload_button = QtWidgets.QPushButton("Reload")
+        self.reload_button.setMinimumWidth(90)
+        self.reload_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed,
+            QtWidgets.QSizePolicy.Fixed
+        )
         self.reload_button.setIcon(
             self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload)
         )
@@ -439,8 +446,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
     def _reload(self):
         """Close this snapshot and rebuild it from the current comp."""
+        self._skip_on_close = True
+        on_close = self._on_close
         self.close()
-        QtCore.QTimer.singleShot(0, clean_up_connector_labels)
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: clean_up_connector_labels(on_close=on_close)
+        )
 
     def _add_rows(self, parent, candidates, safe, unnamed=False):
         """Add compact candidate rows beneath a status group."""
@@ -854,13 +866,18 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self.accept()
 
 
-def clean_up_connector_labels():
+def clean_up_connector_labels(on_close=None):
     """Review and normalize PostageStamp and source-Dot label pairs."""
     global _ACTIVE_DIALOG
 
     if _ACTIVE_DIALOG is not None and _ACTIVE_DIALOG.isVisible():
+        existing_on_close = _ACTIVE_DIALOG._on_close
+        _ACTIVE_DIALOG._skip_on_close = True
         _ACTIVE_DIALOG.close()
         _ACTIVE_DIALOG = None
+
+        if on_close is None:
+            on_close = existing_on_close
 
     safe, conflicts, unnamed = _collect_candidates()
 
@@ -868,20 +885,36 @@ def clean_up_connector_labels():
         nuke.message(
             "All eligible connector labels are already clean."
         )
+
+        if on_close is not None:
+            QtCore.QTimer.singleShot(0, on_close)
+
         return 0
 
     _ACTIVE_DIALOG = ConnectorCleanupDialog(
         safe,
         conflicts,
         unnamed,
+        on_close=on_close,
         parent=_nuke_main_window()
     )
-    _ACTIVE_DIALOG.finished.connect(_clear_active_dialog)
+    dialog = _ACTIVE_DIALOG
+    dialog.finished.connect(
+        lambda result, closed_dialog=dialog: _cleanup_dialog_finished(
+            closed_dialog,
+            result
+        )
+    )
     _ACTIVE_DIALOG.show()
     return _ACTIVE_DIALOG
 
 
-def _clear_active_dialog(_result):
-    """Release the modeless cleanup window after it closes."""
+def _cleanup_dialog_finished(dialog, _result):
+    """Release the cleanup window and run its optional return action."""
     global _ACTIVE_DIALOG
-    _ACTIVE_DIALOG = None
+
+    if _ACTIVE_DIALOG is dialog:
+        _ACTIVE_DIALOG = None
+
+    if not dialog._skip_on_close and dialog._on_close is not None:
+        QtCore.QTimer.singleShot(0, dialog._on_close)
