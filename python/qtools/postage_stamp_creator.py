@@ -19,8 +19,10 @@
 # Opens a searchable menu containing:
 #   - Viewer
 #   - Every labelled Dot
+#   - Read nodes, when enabled in the persistent menu options
 #
-# After choosing a source, creates a new PostageStamp connected to it.
+# After choosing a source, creates a new PostageStamp connected to it, or a
+# named Dot for a Read when that persistent option is enabled.
 #
 #
 # DOTS OR POSTAGESTAMPS SELECTED
@@ -52,6 +54,9 @@
 #     postage_stamp_creator.create_or_retarget_postage_stamp()
 
 
+import os
+import re
+
 import nuke
 
 try:
@@ -65,6 +70,12 @@ SUPPORTED_TARGET_CLASSES = {
     "PostageStamp",
 }
 
+SETTINGS_ORGANISATION = "QTools"
+SETTINGS_APPLICATION = "PostageStampCreator"
+SETTING_HIDE_TO = "hide_to_dots"
+SETTING_SHOW = "show_sources"
+SETTING_CREATE_DOT = "create_dot_for_read"
+
 
 def _clean_text(value):
     """Return trimmed, single-line text."""
@@ -72,6 +83,50 @@ def _clean_text(value):
         return ""
 
     return " ".join(str(value).split())
+
+
+def _settings():
+    """Return the persistent settings for this tool."""
+    return QtCore.QSettings(
+        SETTINGS_ORGANISATION,
+        SETTINGS_APPLICATION
+    )
+
+
+def _setting_bool(key, default):
+    """Return a persistent boolean setting."""
+    value = _settings().value(key, default)
+
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+
+    return bool(value)
+
+
+def _read_frame_name(node):
+    """Return the filename stem without its frame-number token."""
+    if node is None or "file" not in node.knobs():
+        return ""
+
+    file_path = str(node["file"].value() or "")
+    filename = os.path.basename(file_path.replace("\\", "/"))
+    stem, _extension = os.path.splitext(filename)
+
+    return re.sub(
+        r"(?:#+|%0?\d*d|\$F\d*)$",
+        "",
+        stem
+    )
+
+
+def _read_display_text(node):
+    """Return the source-menu display text for a Read node."""
+    node_name = node.name()
+
+    if re.fullmatch(r"Read\d*", node_name):
+        return _read_frame_name(node) or node_name
+
+    return node_name
 
 
 def _node_display_text(node):
@@ -226,6 +281,23 @@ def _labelled_dots(excluded_nodes=None):
         dots,
         key=lambda node: (
             _clean_text(node["label"].value()).lower(),
+            node.name().lower(),
+        )
+    )
+
+
+def _read_nodes(excluded_nodes=None):
+    """Return every Read node except nodes included in excluded_nodes."""
+    excluded_nodes = set(excluded_nodes or [])
+
+    return sorted(
+        (
+            node
+            for node in nuke.allNodes("Read")
+            if node not in excluded_nodes
+        ),
+        key=lambda node: (
+            _read_display_text(node).lower(),
             node.name().lower(),
         )
     )
@@ -489,13 +561,102 @@ def _retarget_nodes(targets, source):
     return len(successful_targets)
 
 
+class DotNameDialog(QtWidgets.QDialog):
+    """Ask for the label of a Dot created from a Read node."""
+
+    def __init__(self, source, parent=None):
+        super(DotNameDialog, self).__init__(parent)
+
+        self._source = source
+        self.setWindowTitle("Enter Dot name")
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel("Enter Dot name:"))
+
+        name_layout = QtWidgets.QHBoxLayout()
+        self.name_field = QtWidgets.QLineEdit(
+            _read_display_text(source)
+        )
+        self.frame_name_button = QtWidgets.QPushButton(
+            "Use frame name"
+        )
+        name_layout.addWidget(self.name_field)
+        name_layout.addWidget(self.frame_name_button)
+        layout.addLayout(name_layout)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok
+            | QtWidgets.QDialogButtonBox.Cancel
+        )
+        layout.addWidget(buttons)
+
+        self.frame_name_button.clicked.connect(
+            self._use_frame_name
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        self.name_field.selectAll()
+        self.name_field.setFocus()
+
+    def _use_frame_name(self):
+        """Replace the proposed label with the Read filename stem."""
+        self.name_field.setText(
+            _read_frame_name(self._source)
+        )
+
+    def dot_name(self):
+        """Return the entered Dot label."""
+        return _clean_text(self.name_field.text())
+
+
+def _create_named_read_dot(source):
+    """Ask for a label, then create a visible-input Dot from source."""
+    dialog = DotNameDialog(
+        source,
+        parent=_nuke_main_window()
+    )
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+
+    _deselect_all()
+    dot = nuke.createNode("Dot", inpanel=False)
+    target_x = dot.xpos()
+    target_y = dot.ypos()
+
+    try:
+        dot.setInput(0, source)
+    except Exception as error:
+        try:
+            nuke.delete(dot)
+        except Exception:
+            pass
+
+        nuke.message(
+            "The Dot could not be connected.\n\n{}".format(error)
+        )
+        return None
+
+    if "label" in dot.knobs():
+        dot["label"].setValue(dialog.dot_name())
+
+    if "hide_input" in dot.knobs():
+        dot["hide_input"].setValue(False)
+
+    dot.setXYpos(target_x, target_y)
+    dot.setSelected(True)
+
+    return dot
+
+
 class SourceSelectionDialog(QtWidgets.QDialog):
     """
     Searchable source-selection window.
 
     Displays:
       - Viewer
-      - Every labelled Dot
+      - Labelled Dots and/or Read nodes, according to user settings
 
     Target nodes can be excluded to prevent self-connections.
     """
@@ -505,6 +666,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         self._excluded_nodes = set(excluded_nodes or [])
         self._entries = []
+        self._settings = _settings()
 
         self.setWindowTitle("Select Source")
         self.resize(460, 520)
@@ -520,9 +682,42 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
         layout.addWidget(title)
 
+        options_layout = QtWidgets.QHBoxLayout()
+
+        self.hide_to_checkbox = QtWidgets.QCheckBox(
+            'Hide "To"'
+        )
+        self.hide_to_checkbox.setChecked(
+            _setting_bool(SETTING_HIDE_TO, True)
+        )
+        options_layout.addWidget(self.hide_to_checkbox)
+
+        options_layout.addWidget(QtWidgets.QLabel("Show:"))
+        self.show_combo = QtWidgets.QComboBox()
+        self.show_combo.addItems(["Dots", "Read", "All"])
+        saved_show = str(
+            self._settings.value(SETTING_SHOW, "Dots")
+        )
+        show_index = self.show_combo.findText(saved_show)
+        self.show_combo.setCurrentIndex(
+            show_index if show_index >= 0 else 0
+        )
+        options_layout.addWidget(self.show_combo)
+
+        self.create_dot_checkbox = QtWidgets.QCheckBox(
+            "Create dot"
+        )
+        self.create_dot_checkbox.setChecked(
+            _setting_bool(SETTING_CREATE_DOT, True)
+        )
+        options_layout.addWidget(self.create_dot_checkbox)
+        options_layout.addStretch()
+
+        layout.addLayout(options_layout)
+
         self.search_field = QtWidgets.QLineEdit()
         self.search_field.setPlaceholderText(
-            "Search Viewer or labelled Dots..."
+            "Search Viewer, labelled Dots, or Reads..."
         )
         self.search_field.setClearButtonEnabled(True)
         layout.addWidget(self.search_field)
@@ -567,6 +762,39 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.create_button.clicked.connect(
             self.accept
         )
+
+        self.hide_to_checkbox.toggled.connect(
+            self._save_settings_and_repopulate
+        )
+
+        self.show_combo.currentTextChanged.connect(
+            self._save_settings_and_repopulate
+        )
+
+        self.create_dot_checkbox.toggled.connect(
+            self._save_settings
+        )
+
+    def _save_settings(self, _value=None):
+        """Save the current source-menu options."""
+        self._settings.setValue(
+            SETTING_HIDE_TO,
+            self.hide_to_checkbox.isChecked()
+        )
+        self._settings.setValue(
+            SETTING_SHOW,
+            self.show_combo.currentText()
+        )
+        self._settings.setValue(
+            SETTING_CREATE_DOT,
+            self.create_dot_checkbox.isChecked()
+        )
+        self._settings.sync()
+
+    def _save_settings_and_repopulate(self, _value=None):
+        """Save source filters and rebuild the visible entries."""
+        self._save_settings()
+        self._populate()
 
     def _accept_selected_item(self, _item):
         """Accept the dialog when a valid item is double-clicked."""
@@ -619,6 +847,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
     def _populate(self):
         """Populate Viewer and labelled-Dot entries."""
+        self.list_widget.clear()
+        self._entries = []
+
         viewer_source = _active_viewer_source()
 
         if (
@@ -643,17 +874,43 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                 "No source is connected to the active Viewer"
             )
 
-        for dot in _labelled_dots(
-            excluded_nodes=self._excluded_nodes
-        ):
-            dot_label = _clean_text(
-                dot["label"].value()
-            )
+        show_sources = self.show_combo.currentText()
 
-            self._add_entry(
-                dot_label,
-                dot
-            )
+        if show_sources in {"Dots", "All"}:
+            for dot in _labelled_dots(
+                excluded_nodes=self._excluded_nodes
+            ):
+                dot_label = _clean_text(
+                    dot["label"].value()
+                )
+
+                if (
+                    self.hide_to_checkbox.isChecked()
+                    and dot_label.lower().startswith("to ")
+                ):
+                    continue
+
+                self._add_entry(
+                    dot_label,
+                    dot
+                )
+
+        if show_sources in {"Read", "All"}:
+            for read in _read_nodes(
+                excluded_nodes=self._excluded_nodes
+            ):
+                display_text = _read_display_text(read)
+                frame_name = _read_frame_name(read)
+                description = ""
+
+                if frame_name and frame_name != display_text:
+                    description = "({})".format(frame_name)
+
+                self._add_entry(
+                    display_text,
+                    read,
+                    description
+                )
 
         self._select_first_available_item()
         self.search_field.setFocus()
@@ -885,6 +1142,12 @@ def create_or_retarget_postage_stamp():
 
     if reconnected:
         return reconnected
+
+    if (
+        source.Class() == "Read"
+        and _setting_bool(SETTING_CREATE_DOT, True)
+    ):
+        return _create_named_read_dot(source)
 
     return _create_postage_stamp(source)
 
