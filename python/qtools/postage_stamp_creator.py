@@ -709,6 +709,11 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         title_layout = QtWidgets.QHBoxLayout()
         self.cleanup_button = QtWidgets.QPushButton("🔨")
+        cleanup_button_size = self.cleanup_button.sizeHint().height()
+        self.cleanup_button.setFixedSize(
+            cleanup_button_size,
+            cleanup_button_size
+        )
         self.cleanup_button.setToolTip(
             "Close this source picker and open Connector Label clean up."
         )
@@ -795,7 +800,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.cancel_button.setToolTip(
             "Close this window without creating or connecting anything."
         )
-        self.create_button = QtWidgets.QPushButton("Create or Connect")
+        self.create_button = QtWidgets.QPushButton("Connect")
         self.create_button.setToolTip(
             "Use the highlighted source to create or connect the requested nodes."
         )

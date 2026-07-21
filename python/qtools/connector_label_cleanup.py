@@ -827,9 +827,8 @@ def clean_up_connector_labels():
     global _ACTIVE_DIALOG
 
     if _ACTIVE_DIALOG is not None and _ACTIVE_DIALOG.isVisible():
-        _ACTIVE_DIALOG.raise_()
-        _ACTIVE_DIALOG.activateWindow()
-        return _ACTIVE_DIALOG
+        _ACTIVE_DIALOG.close()
+        _ACTIVE_DIALOG = None
 
     safe, conflicts, unnamed = _collect_candidates()
 
