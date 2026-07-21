@@ -622,8 +622,13 @@ def _create_named_read_dot(source):
 
     _deselect_all()
     dot = nuke.createNode("Dot", inpanel=False)
-    target_x = dot.xpos()
-    target_y = dot.ypos()
+    source_height = source.screenHeight()
+    target_x = source.xpos() + int(
+        (source.screenWidth() - dot.screenWidth()) / 2
+    )
+    target_y = source.ypos() + source_height + int(
+        source_height * 1.25
+    )
 
     try:
         dot.setInput(0, source)
@@ -714,6 +719,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             "Search Viewer, labelled Dots, or Reads..."
         )
         self.search_field.setClearButtonEnabled(True)
+        self.search_field.installEventFilter(self)
         layout.addWidget(self.search_field)
 
         self.list_widget = QtWidgets.QListWidget()
@@ -724,6 +730,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         layout.addWidget(self.list_widget)
 
         button_layout = QtWidgets.QHBoxLayout()
+        self.show_node_button = QtWidgets.QPushButton("Show")
+        self.show_node_button.setEnabled(False)
+        button_layout.addWidget(self.show_node_button)
         button_layout.addWidget(self.hide_to_checkbox)
         button_layout.addWidget(self.create_dot_checkbox)
         button_layout.addStretch()
@@ -759,6 +768,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             self.accept
         )
 
+        self.show_node_button.clicked.connect(
+            self._show_selected_node
+        )
+
         self.hide_to_checkbox.toggled.connect(
             self._save_settings_and_repopulate
         )
@@ -791,6 +804,73 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         """Save source filters and rebuild the visible entries."""
         self._save_settings()
         self._populate()
+
+    def eventFilter(self, watched, event):
+        """Move the source selection with arrows while search keeps focus."""
+        if (
+            watched is self.search_field
+            and event.type() == QtCore.QEvent.KeyPress
+        ):
+            if event.key() == QtCore.Qt.Key_Up:
+                self._move_selection(-1)
+                return True
+
+            if event.key() == QtCore.Qt.Key_Down:
+                self._move_selection(1)
+                return True
+
+        return super(SourceSelectionDialog, self).eventFilter(
+            watched,
+            event
+        )
+
+    def _move_selection(self, direction):
+        """Move to the next visible, enabled source entry."""
+        available_rows = []
+
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+
+            if (
+                not item.isHidden()
+                and item.flags() & QtCore.Qt.ItemIsEnabled
+                and item.data(QtCore.Qt.UserRole) is not None
+            ):
+                available_rows.append(row)
+
+        if not available_rows:
+            return
+
+        current_row = self.list_widget.currentRow()
+
+        try:
+            current_index = available_rows.index(current_row)
+        except ValueError:
+            current_index = -1 if direction > 0 else 0
+
+        next_row = available_rows[
+            (current_index + direction) % len(available_rows)
+        ]
+        self.list_widget.setCurrentRow(next_row)
+        self.list_widget.scrollToItem(
+            self.list_widget.item(next_row)
+        )
+
+    def _show_selected_node(self):
+        """Center the Node Graph on the selected menu source."""
+        source = self.selected_source()
+
+        if source is None:
+            return
+
+        center = [
+            source.xpos() + source.screenWidth() / 2.0,
+            source.ypos() + source.screenHeight() / 2.0,
+        ]
+        scale = nuke.zoom()
+        nuke.zoom(scale if scale and scale > 0 else 1, center)
+
+        self.search_field.setFocus()
 
     def _accept_selected_item(self, _item):
         """Accept the dialog when a valid item is double-clicked."""
@@ -987,6 +1067,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
 
         self.create_button.setEnabled(valid)
+        self.show_node_button.setEnabled(valid)
 
     def selected_source(self):
         """Return the source represented by the selected list item."""
