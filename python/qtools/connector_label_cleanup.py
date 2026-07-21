@@ -176,6 +176,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
+        self._original_zoom = nuke.zoom()
+        self._original_center = list(nuke.center())
+        self._original_selection = list(nuke.selectedNodes())
         self.setWindowTitle("Connector Label clean up")
         self.resize(1100, 650)
 
@@ -310,6 +313,18 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 name_combo.setCurrentIndex(
                     preferred_index if preferred_index >= 0 else 0
                 )
+                widest_text = max(
+                    (
+                        name_combo.itemText(index)
+                        for index in range(name_combo.count())
+                    ),
+                    key=len
+                )
+                combo_width = (
+                    name_combo.fontMetrics().horizontalAdvance(widest_text)
+                    + 45
+                )
+                name_combo.setFixedWidth(max(160, combo_width))
 
                 resolution_widget = QtWidgets.QWidget()
                 resolution_layout = QtWidgets.QHBoxLayout(
@@ -322,12 +337,21 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 previous_button = QtWidgets.QToolButton()
                 previous_button.setText("‹")
                 previous_button.setToolTip("Show previous connected node")
+                arrow_font = previous_button.font()
+                arrow_font.setPointSizeF(
+                    arrow_font.pointSizeF() * 1.25
+                )
+                previous_button.setFont(arrow_font)
                 resolution_layout.addWidget(previous_button)
+
+                resolution_layout.addWidget(QtWidgets.QLabel("Show"))
 
                 next_button = QtWidgets.QToolButton()
                 next_button.setText("›")
                 next_button.setToolTip("Show next connected node")
+                next_button.setFont(arrow_font)
                 resolution_layout.addWidget(next_button)
+                resolution_layout.addStretch()
 
                 self.tree.setItemWidget(item, 2, resolution_widget)
 
@@ -432,6 +456,30 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         node.setSelected(True)
         nuke.zoomToFitSelected()
+
+    def _restore_graph_view(self):
+        """Restore the Node Graph state from before the dialog opened."""
+        for node in nuke.selectedNodes():
+            try:
+                node.setSelected(False)
+            except Exception:
+                pass
+
+        for node in self._original_selection:
+            try:
+                node.setSelected(True)
+            except Exception:
+                pass
+
+        try:
+            nuke.zoom(self._original_zoom, self._original_center)
+        except Exception:
+            pass
+
+    def done(self, result):
+        """Restore the original graph view whenever the dialog closes."""
+        self._restore_graph_view()
+        super(ConnectorCleanupDialog, self).done(result)
 
     def _item_changed(self, item, column):
         """Refresh highlighting and totals after a checkbox changes."""
