@@ -113,7 +113,7 @@ def _read_frame_name(node):
     stem, _extension = os.path.splitext(filename)
 
     return re.sub(
-        r"(?:#+|%0?\d*d|\$F\d*)$",
+        r"[\W_]*(?:#+|%0?\d*d|\$F\d*)$",
         "",
         stem
     )
@@ -897,15 +897,16 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             ):
                 display_text = _read_display_text(read)
                 frame_name = _read_frame_name(read)
-                description = ""
 
                 if frame_name and frame_name != display_text:
-                    description = "({})".format(frame_name)
+                    display_text = "{} ({})".format(
+                        display_text,
+                        frame_name
+                    )
 
                 self._add_entry(
                     display_text,
-                    read,
-                    description
+                    read
                 )
 
         self._select_first_available_item()
