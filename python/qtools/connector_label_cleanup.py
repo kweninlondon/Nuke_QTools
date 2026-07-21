@@ -128,12 +128,23 @@ def _collect_candidates():
             name
             for _stamp, name in connections
         )
+        stamp_name_counts = []
+
+        for stamp_name in stamp_names:
+            count = sum(
+                1
+                for _stamp, name in connections
+                if name.lower() == stamp_name.lower()
+            )
+            stamp_name_counts.append((stamp_name, count))
+
         dot_name = _connector_name(dot["label"].value())
         choices = _unique_names(stamp_names + [dot_name])
         candidate = {
             "dot": dot,
             "connections": connections,
             "choices": choices,
+            "stamp_name_counts": stamp_name_counts,
             "preferred_name": stamp_names[0],
         }
 
@@ -156,7 +167,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         self._rows = []
         self.setWindowTitle("Connector Label clean up")
-        self.resize(850, 600)
+        self.resize(1100, 650)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
@@ -205,8 +216,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         header = self.tree.header()
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Interactive)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        self.tree.setColumnWidth(1, 430)
 
         button_layout = QtWidgets.QHBoxLayout()
         select_all_button = QtWidgets.QPushButton("Select All")
@@ -269,22 +281,76 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             if not safe:
                 name_combo = QtWidgets.QComboBox()
                 name_combo.setEditable(True)
+                name_combo.setMinimumWidth(500)
                 name_combo.addItems(candidate["choices"])
                 name_combo.setCurrentText(preferred_name)
+                name_combo.view().setMinimumWidth(650)
                 self.tree.setItemWidget(item, 2, name_combo)
+
+            option_buttons = []
+
+            if not safe:
+                button_group = QtWidgets.QButtonGroup(self)
+
+                for option_name in candidate["choices"]:
+                    count = next(
+                        (
+                            option_count
+                            for counted_name, option_count
+                            in candidate["stamp_name_counts"]
+                            if counted_name.lower() == option_name.lower()
+                        ),
+                        0
+                    )
+                    option_item = QtWidgets.QTreeWidgetItem(item)
+                    option_button = QtWidgets.QRadioButton()
+
+                    if count:
+                        stamp_word = (
+                            "PostageStamp"
+                            if count == 1
+                            else "PostageStamps"
+                        )
+                        option_button.setText(
+                            "{} — {} {}".format(
+                                option_name,
+                                count,
+                                stamp_word
+                            )
+                        )
+                    else:
+                        option_button.setText(
+                            "{} — current Dot label".format(option_name)
+                        )
+
+                    button_group.addButton(option_button)
+                    self.tree.setItemWidget(
+                        option_item,
+                        1,
+                        option_button
+                    )
+                    option_button.clicked.connect(
+                        lambda checked, name=option_name,
+                        combo=name_combo: (
+                            combo.setCurrentText(name)
+                            if checked
+                            else None
+                        )
+                    )
+                    option_buttons.append((option_name, option_button))
 
             detail_item = QtWidgets.QTreeWidgetItem(item)
             detail_item.setFirstColumnSpanned(True)
             dot_label = _clean_text(candidate["dot"]["label"].value())
-            stamp_labels = ", ".join(
-                _clean_text(stamp["label"].value())
-                for stamp, _name in candidate["connections"]
+            stamp_summary = ", ".join(
+                "{} ×{}".format(name, count)
+                for name, count in candidate["stamp_name_counts"]
             )
             detail_item.setText(
                 0,
                 "Current — Dot: {}  |  PostageStamps: {}".format(
                     dot_label,
-                    stamp_labels
+                    stamp_summary
                 )
             )
             detail_item.setFlags(QtCore.Qt.ItemIsEnabled)
@@ -297,6 +363,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "candidate": candidate,
                 "item": item,
                 "name_combo": name_combo,
+                "option_buttons": option_buttons,
                 "current_text": current_text,
                 "impact_text": impact_text,
                 "result_detail_item": result_detail_item,
@@ -306,10 +373,24 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
             if name_combo is not None:
                 name_combo.currentTextChanged.connect(
-                    lambda _text, data=row_data: self._update_preview(data)
+                    lambda _text, data=row_data: self._resolution_changed(data)
                 )
 
-            self._update_preview(row_data)
+            self._resolution_changed(row_data)
+
+    def _resolution_changed(self, row_data):
+        """Synchronize expanded choices and refresh the compact preview."""
+        if row_data["name_combo"] is not None:
+            selected_name = _clean_text(
+                row_data["name_combo"].currentText()
+            )
+
+            for option_name, option_button in row_data["option_buttons"]:
+                option_button.setChecked(
+                    option_name.lower() == selected_name.lower()
+                )
+
+        self._update_preview(row_data)
 
     def _update_preview(self, row_data):
         """Update one row's proposed From/To labels."""
