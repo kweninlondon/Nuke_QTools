@@ -111,16 +111,10 @@ def _collect_candidates():
     connections_by_dot = {}
 
     for stamp in nuke.allNodes("PostageStamp"):
-        if not _has_hidden_input(stamp):
-            continue
-
         if "label" not in stamp.knobs():
             continue
 
         stamp_name = _connector_name(stamp["label"].value())
-
-        if not stamp_name:
-            continue
 
         try:
             dot = stamp.input(0)
@@ -130,9 +124,7 @@ def _collect_candidates():
         if dot is None or dot.Class() != "Dot":
             continue
 
-        if "label" not in dot.knobs() or not _clean_text(
-            dot["label"].value()
-        ):
+        if "label" not in dot.knobs():
             continue
 
         connections_by_dot.setdefault(dot, []).append(
@@ -141,6 +133,7 @@ def _collect_candidates():
 
     safe = []
     conflicts = []
+    unnamed = []
 
     for dot, connections in connections_by_dot.items():
         stamp_names = _unique_names(
@@ -174,6 +167,24 @@ def _collect_candidates():
 
         dot_name = _connector_name(dot["label"].value())
         choices = _unique_names(stamp_names + [dot_name])
+        visible_input_count = sum(
+            1
+            for stamp, _name in connections
+            if not _has_hidden_input(stamp)
+        )
+
+        if not choices:
+            unnamed.append({
+                "dot": dot,
+                "connections": connections,
+                "choices": [],
+                "stamp_name_counts": [],
+                "raw_stamp_label_counts": raw_stamp_label_counts,
+                "visible_input_count": visible_input_count,
+                "preferred_name": "",
+            })
+            continue
+
         count_by_name = {
             name.lower(): count
             for name, count in stamp_name_counts
@@ -190,10 +201,11 @@ def _collect_candidates():
             "choices": choices,
             "stamp_name_counts": stamp_name_counts,
             "raw_stamp_label_counts": raw_stamp_label_counts,
+            "visible_input_count": visible_input_count,
             "preferred_name": choices[0],
         }
 
-        if len(stamp_names) == 1:
+        if len(stamp_names) <= 1:
             expected_dot_label = _clean_text(
                 _from_label(candidate["preferred_name"])
             ).lower()
@@ -209,8 +221,16 @@ def _collect_candidates():
                 == expected_stamp_label
                 for stamp, _name in connections
             )
+            inputs_are_healthy = all(
+                _has_hidden_input(stamp)
+                for stamp, _name in connections
+            )
 
-            if dot_is_healthy and stamps_are_healthy:
+            if (
+                dot_is_healthy
+                and stamps_are_healthy
+                and inputs_are_healthy
+            ):
                 continue
 
             safe.append(candidate)
@@ -218,7 +238,11 @@ def _collect_candidates():
             conflicts.append(candidate)
 
     sort_key = lambda candidate: candidate["dot"].name().lower()
-    return sorted(safe, key=sort_key), sorted(conflicts, key=sort_key)
+    return (
+        sorted(safe, key=sort_key),
+        sorted(conflicts, key=sort_key),
+        sorted(unnamed, key=sort_key),
+    )
 
 
 def _choice_count(candidate, option_name):
@@ -248,7 +272,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
     HEADERS = ["Update", "Change", "Conflict resolution"]
 
-    def __init__(self, safe, conflicts, parent=None):
+    def __init__(self, safe, conflicts, unnamed, parent=None):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
@@ -263,7 +287,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             _choice_text(candidate, option_name)
             for candidate in conflicts
             for option_name in candidate["choices"]
-        ]
+        ] + ["Enter connector name..."]
         conflict_text_width = max(
             self.fontMetrics().horizontalAdvance(text)
             for text in conflict_texts or ["Conflict resolution"]
@@ -311,6 +335,19 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         conflict_group.setExpanded(True)
         self._add_rows(conflict_group, conflicts, safe=False)
 
+        unnamed_group = QtWidgets.QTreeWidgetItem(
+            self.tree,
+            ["Unnamed ({}) — enter a name".format(len(unnamed))]
+        )
+        unnamed_group.setFirstColumnSpanned(True)
+        unnamed_group.setExpanded(True)
+        self._add_rows(
+            unnamed_group,
+            unnamed,
+            safe=False,
+            unnamed=True
+        )
+
         self.tree.itemChanged.connect(self._item_changed)
 
         for row_data in self._rows:
@@ -330,10 +367,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_conflicts_button = QtWidgets.QPushButton(
             "Select Conflicts"
         )
+        select_unnamed_button = QtWidgets.QPushButton("Select Unnamed")
         clear_button = QtWidgets.QPushButton("Clear Selection")
         button_layout.addWidget(select_all_button)
         button_layout.addWidget(select_safe_button)
         button_layout.addWidget(select_conflicts_button)
+        button_layout.addWidget(select_unnamed_button)
         button_layout.addWidget(clear_button)
         button_layout.addStretch()
 
@@ -347,11 +386,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_all_button.clicked.connect(self._select_all)
         select_safe_button.clicked.connect(self._select_safe)
         select_conflicts_button.clicked.connect(self._select_conflicts)
+        select_unnamed_button.clicked.connect(self._select_unnamed)
         clear_button.clicked.connect(self._clear_selection)
         cancel_button.clicked.connect(self.reject)
         apply_button.clicked.connect(self._apply_selected)
 
-    def _add_rows(self, parent, candidates, safe):
+    def _add_rows(self, parent, candidates, safe, unnamed=False):
         """Add compact candidate rows beneath a status group."""
         for candidate in candidates:
             preferred_name = candidate["preferred_name"]
@@ -362,7 +402,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             current_text = (
                 " / ".join(current_names)
                 if safe
-                else "Multiple ({})".format(len(candidate["connections"]))
+                else (
+                    "Unnamed"
+                    if unnamed
+                    else "Multiple ({})".format(
+                        len(candidate["connections"])
+                    )
+                )
             )
             affected_count = 1 + len(candidate["connections"])
             item = QtWidgets.QTreeWidgetItem(
@@ -379,22 +425,28 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             )
 
             name_combo = None
+            name_field = None
             change_label = None
 
             if not safe:
-                name_combo = QtWidgets.QComboBox()
+                if unnamed:
+                    name_field = QtWidgets.QLineEdit()
+                    name_field.setPlaceholderText("Enter connector name...")
+                    name_field.setFixedWidth(self._combo_width)
+                else:
+                    name_combo = QtWidgets.QComboBox()
 
-                for option_name in candidate["choices"]:
-                    name_combo.addItem(
-                        _choice_text(candidate, option_name),
-                        option_name
+                    for option_name in candidate["choices"]:
+                        name_combo.addItem(
+                            _choice_text(candidate, option_name),
+                            option_name
+                        )
+
+                    preferred_index = name_combo.findData(preferred_name)
+                    name_combo.setCurrentIndex(
+                        preferred_index if preferred_index >= 0 else 0
                     )
-
-                preferred_index = name_combo.findData(preferred_name)
-                name_combo.setCurrentIndex(
-                    preferred_index if preferred_index >= 0 else 0
-                )
-                name_combo.setFixedWidth(self._combo_width)
+                    name_combo.setFixedWidth(self._combo_width)
 
                 resolution_widget = QtWidgets.QWidget()
                 resolution_layout = QtWidgets.QHBoxLayout(
@@ -429,23 +481,35 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 item.setText(1, "")
                 item.setSizeHint(1, QtCore.QSize(0, 30))
                 self.tree.setItemWidget(item, 1, change_widget)
-                resolution_layout.addWidget(name_combo)
+                resolution_layout.addWidget(
+                    name_field if unnamed else name_combo
+                )
                 resolution_layout.addStretch()
 
                 self.tree.setItemWidget(item, 2, resolution_widget)
 
             detail_item = QtWidgets.QTreeWidgetItem(item)
             detail_item.setFirstColumnSpanned(True)
-            dot_label = _clean_text(candidate["dot"]["label"].value())
+            dot_label = (
+                _clean_text(candidate["dot"]["label"].value())
+                or "(empty)"
+            )
             stamp_summary = ", ".join(
                 "{} ({})".format(name, count)
                 for name, count in candidate["raw_stamp_label_counts"]
+            ) or "(empty)"
+            visible_input_count = candidate["visible_input_count"]
+            input_summary = (
+                "{} visible input(s)".format(visible_input_count)
+                if visible_input_count
+                else "inputs hidden"
             )
             detail_item.setText(
                 0,
-                "Current — Dot: {}  |  PostageStamps: {}".format(
+                "Current — Dot: {}  |  PostageStamps: {}  |  {}".format(
                     dot_label,
-                    stamp_summary
+                    stamp_summary,
+                    input_summary
                 )
             )
             detail_item.setFlags(QtCore.Qt.ItemIsEnabled)
@@ -458,12 +522,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "candidate": candidate,
                 "item": item,
                 "name_combo": name_combo,
+                "name_field": name_field,
                 "change_label": change_label,
                 "current_text": current_text,
                 "affected_count": affected_count,
                 "result_detail_item": result_detail_item,
                 "view_index": -1,
                 "safe": safe,
+                "unnamed": unnamed,
             }
             self._rows.append(row_data)
 
@@ -482,11 +548,41 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     )
                 )
 
+            if name_field is not None:
+                name_field.textChanged.connect(
+                    lambda _text, data=row_data: (
+                        self._unnamed_name_changed(data)
+                    )
+                )
+                previous_button.clicked.connect(
+                    lambda _checked=False, data=row_data: (
+                        self._show_connected_node(data, -1)
+                    )
+                )
+                next_button.clicked.connect(
+                    lambda _checked=False, data=row_data: (
+                        self._show_connected_node(data, 1)
+                    )
+                )
+
             self._update_preview(row_data)
+
+    def _unnamed_name_changed(self, row_data):
+        """Select a formerly unnamed row when a usable name is entered."""
+        has_name = bool(
+            _clean_text(row_data["name_field"].text())
+        )
+        row_data["item"].setCheckState(
+            0,
+            QtCore.Qt.Checked if has_name else QtCore.Qt.Unchecked
+        )
+        self._update_preview(row_data)
 
     def _update_preview(self, row_data):
         """Update one row's proposed From/To labels."""
-        if row_data["name_combo"] is None:
+        if row_data["name_field"] is not None:
+            name = _clean_text(row_data["name_field"].text())
+        elif row_data["name_combo"] is None:
             name = row_data["candidate"]["preferred_name"]
         else:
             name = _clean_text(row_data["name_combo"].currentData())
@@ -498,9 +594,10 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 row_data["affected_count"]
             )
         else:
-            change_text = "{} → To {}".format(
-                row_data["current_text"],
-                name
+            change_text = (
+                "{} → To {}".format(row_data["current_text"], name)
+                if name
+                else "Unnamed → enter a name"
             )
 
         if row_data["change_label"] is None:
@@ -509,9 +606,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             row_data["change_label"].setText(change_text)
         row_data["result_detail_item"].setText(
             0,
-            "Result — Dot: {}  |  PostageStamps: To {}".format(
-                _clean_text(_from_label(name)),
-                name
+            (
+                "Result — Dot: {}  |  PostageStamps: To {}  |  "
+                "inputs hidden".format(
+                    _clean_text(_from_label(name)),
+                    name
+                )
+                if name
+                else "Result — enter a name to preview this fix"
             )
         )
 
@@ -633,7 +735,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self._set_checked(lambda row: row["safe"])
 
     def _select_conflicts(self):
-        self._set_checked(lambda row: not row["safe"])
+        self._set_checked(
+            lambda row: not row["safe"] and not row["unnamed"]
+        )
+
+    def _select_unnamed(self):
+        self._set_checked(lambda row: row["unnamed"])
 
     def _clear_selection(self):
         self._set_checked(lambda _row: False)
@@ -646,7 +753,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             if row_data["item"].checkState(0) != QtCore.Qt.Checked:
                 continue
 
-            if row_data["name_combo"] is None:
+            if row_data["name_field"] is not None:
+                name = _clean_text(row_data["name_field"].text())
+            elif row_data["name_combo"] is None:
                 name = row_data["candidate"]["preferred_name"]
             else:
                 name = _clean_text(row_data["name_combo"].currentData())
@@ -668,6 +777,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     "To {}".format(canonical_name)
                 )
 
+                if "hide_input" in stamp.knobs():
+                    stamp["hide_input"].setValue(True)
+
         self.accept()
 
 
@@ -680,9 +792,9 @@ def clean_up_connector_labels():
         _ACTIVE_DIALOG.activateWindow()
         return _ACTIVE_DIALOG
 
-    safe, conflicts = _collect_candidates()
+    safe, conflicts, unnamed = _collect_candidates()
 
-    if not safe and not conflicts:
+    if not safe and not conflicts and not unnamed:
         nuke.message(
             "All eligible connector labels are already clean."
         )
@@ -691,6 +803,7 @@ def clean_up_connector_labels():
     _ACTIVE_DIALOG = ConnectorCleanupDialog(
         safe,
         conflicts,
+        unnamed,
         parent=_nuke_main_window()
     )
     _ACTIVE_DIALOG.finished.connect(_clear_active_dialog)
