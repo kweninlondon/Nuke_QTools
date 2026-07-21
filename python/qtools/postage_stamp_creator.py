@@ -677,12 +677,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
 
-        title = QtWidgets.QLabel(
-            "Select the source:"
-        )
-        layout.addWidget(title)
-
-        options_layout = QtWidgets.QHBoxLayout()
+        title_layout = QtWidgets.QHBoxLayout()
+        title_layout.addWidget(QtWidgets.QLabel("Select the source:"))
+        title_layout.addStretch()
+        title_layout.addWidget(QtWidgets.QLabel("Show:"))
 
         self.hide_to_checkbox = QtWidgets.QCheckBox(
             'Hide "To"'
@@ -690,9 +688,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.hide_to_checkbox.setChecked(
             _setting_bool(SETTING_HIDE_TO, True)
         )
-        options_layout.addWidget(self.hide_to_checkbox)
 
-        options_layout.addWidget(QtWidgets.QLabel("Show:"))
         self.show_combo = QtWidgets.QComboBox()
         self.show_combo.addItems(["Dots", "Read", "All"])
         saved_show = str(
@@ -702,7 +698,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.show_combo.setCurrentIndex(
             show_index if show_index >= 0 else 0
         )
-        options_layout.addWidget(self.show_combo)
+        title_layout.addWidget(self.show_combo)
 
         self.create_dot_checkbox = QtWidgets.QCheckBox(
             "Create dot"
@@ -710,10 +706,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.create_dot_checkbox.setChecked(
             _setting_bool(SETTING_CREATE_DOT, True)
         )
-        options_layout.addWidget(self.create_dot_checkbox)
-        options_layout.addStretch()
 
-        layout.addLayout(options_layout)
+        layout.addLayout(title_layout)
 
         self.search_field = QtWidgets.QLineEdit()
         self.search_field.setPlaceholderText(
@@ -730,6 +724,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         layout.addWidget(self.list_widget)
 
         button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addWidget(self.hide_to_checkbox)
+        button_layout.addWidget(self.create_dot_checkbox)
         button_layout.addStretch()
 
         self.cancel_button = QtWidgets.QPushButton("Cancel")
