@@ -76,6 +76,7 @@ SETTING_HIDE_TO = "hide_to_dots"
 SETTING_SHOW_ONLY_FROM = "show_only_from_dots_v2"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
+FROM_LABEL_WRAP_LENGTH = 20
 
 
 def _clean_text(value):
@@ -84,6 +85,13 @@ def _clean_text(value):
         return ""
 
     return " ".join(str(value).split())
+
+
+def _from_label(name):
+    """Format a Dot source label, wrapping long names after From."""
+    name = _clean_text(name)
+    separator = "\n" if len(name) > FROM_LABEL_WRAP_LENGTH else " "
+    return "From{}{}".format(separator, name)
 
 
 def _settings():
@@ -648,9 +656,7 @@ def _create_named_read_dot(source):
         return None
 
     if "label" in dot.knobs():
-        dot["label"].setValue(
-            "From {}".format(dialog.dot_name())
-        )
+        dot["label"].setValue(_from_label(dialog.dot_name()))
 
     if "hide_input" in dot.knobs():
         dot["hide_input"].setValue(False)

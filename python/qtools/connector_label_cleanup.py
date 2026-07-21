@@ -8,6 +8,9 @@ except ImportError:
     from PySide2 import QtCore, QtWidgets
 
 
+FROM_LABEL_WRAP_LENGTH = 20
+
+
 def _clean_text(value):
     """Return trimmed, single-line text."""
     if value is None:
@@ -28,6 +31,13 @@ def _connector_name(label):
         return label[5:].strip()
 
     return label
+
+
+def _from_label(name):
+    """Format a Dot source label, wrapping long names after From."""
+    name = _clean_text(name)
+    separator = "\n" if len(name) > FROM_LABEL_WRAP_LENGTH else " "
+    return "From{}{}".format(separator, name)
 
 
 def _has_hidden_input(node):
@@ -139,44 +149,52 @@ def _collect_candidates():
 class ConnectorCleanupDialog(QtWidgets.QDialog):
     """Preview and choose connector-label cleanup operations."""
 
-    HEADERS = [
-        "Update",
-        "Dot",
-        "Current labels",
-        "Resolve as",
-        "Preview",
-    ]
+    HEADERS = ["Update", "Change", "Conflict resolution"]
 
     def __init__(self, safe, conflicts, parent=None):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
         self.setWindowTitle("Connector Label clean up")
-        self.resize(1050, 650)
+        self.resize(850, 600)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
-            "Review hidden-input PostageStamp connections. "
-            "Each checked row updates its Dot and all listed PostageStamps."
+            "Choose the connector groups to normalize. Expand a row only "
+            "when you need to inspect its current labels."
         ))
 
-        safe_group = QtWidgets.QGroupBox(
-            "Safe — PostageStamp names agree ({})".format(len(safe))
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setColumnCount(len(self.HEADERS))
+        self.tree.setHeaderLabels(self.HEADERS)
+        self.tree.setRootIsDecorated(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setSelectionMode(
+            QtWidgets.QAbstractItemView.NoSelection
         )
-        safe_layout = QtWidgets.QVBoxLayout(safe_group)
-        safe_layout.addWidget(self._build_table(safe, checked=True))
-        layout.addWidget(safe_group)
+        self.tree.setUniformRowHeights(True)
+        layout.addWidget(self.tree)
 
-        conflict_group = QtWidgets.QGroupBox(
-            "Conflicts — choose the correct name ({})".format(
-                len(conflicts)
-            )
+        safe_group = QtWidgets.QTreeWidgetItem(
+            self.tree,
+            ["Safe ({})".format(len(safe))]
         )
-        conflict_layout = QtWidgets.QVBoxLayout(conflict_group)
-        conflict_layout.addWidget(
-            self._build_table(conflicts, checked=False)
+        safe_group.setFirstColumnSpanned(True)
+        safe_group.setExpanded(True)
+        self._add_rows(safe_group, safe, safe=True)
+
+        conflict_group = QtWidgets.QTreeWidgetItem(
+            self.tree,
+            ["Conflicts ({}) — choose a name".format(len(conflicts))]
         )
-        layout.addWidget(conflict_group)
+        conflict_group.setFirstColumnSpanned(True)
+        conflict_group.setExpanded(True)
+        self._add_rows(conflict_group, conflicts, safe=False)
+
+        header = self.tree.header()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
 
         button_layout = QtWidgets.QHBoxLayout()
         select_all_button = QtWidgets.QPushButton("Select All")
@@ -205,89 +223,102 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         cancel_button.clicked.connect(self.reject)
         apply_button.clicked.connect(self.accept)
 
-    def _build_table(self, candidates, checked):
-        """Build a preview table for one candidate group."""
-        table = QtWidgets.QTableWidget(len(candidates), len(self.HEADERS))
-        table.setHorizontalHeaderLabels(self.HEADERS)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
-        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
-
-        for row, candidate in enumerate(candidates):
-            check_item = QtWidgets.QTableWidgetItem()
-            check_item.setFlags(
-                QtCore.Qt.ItemIsEnabled
+    def _add_rows(self, parent, candidates, safe):
+        """Add compact candidate rows beneath a status group."""
+        for candidate in candidates:
+            preferred_name = candidate["preferred_name"]
+            dot_name = _connector_name(
+                candidate["dot"]["label"].value()
+            )
+            current_names = _unique_names([dot_name, preferred_name])
+            current_text = (
+                " / ".join(current_names)
+                if safe
+                else "Multiple"
+            )
+            item = QtWidgets.QTreeWidgetItem(
+                parent,
+                ["", current_text, ""]
+            )
+            item.setFlags(
+                item.flags()
                 | QtCore.Qt.ItemIsUserCheckable
             )
-            check_item.setCheckState(
-                QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked
+            item.setCheckState(
+                0,
+                QtCore.Qt.Checked if safe else QtCore.Qt.Unchecked
             )
-            table.setItem(row, 0, check_item)
 
-            dot = candidate["dot"]
-            table.setItem(row, 1, QtWidgets.QTableWidgetItem(dot.name()))
+            name_combo = None
 
+            if not safe:
+                name_combo = QtWidgets.QComboBox()
+                name_combo.setEditable(True)
+                name_combo.addItems(candidate["choices"])
+                name_combo.setCurrentText(preferred_name)
+                self.tree.setItemWidget(item, 2, name_combo)
+
+            detail_item = QtWidgets.QTreeWidgetItem(item)
+            detail_item.setFirstColumnSpanned(True)
+            dot_label = _clean_text(candidate["dot"]["label"].value())
             stamp_labels = ", ".join(
                 _clean_text(stamp["label"].value())
                 for stamp, _name in candidate["connections"]
             )
-            current_text = "Dot: {}\nPostageStamps: {}".format(
-                _clean_text(dot["label"].value()),
-                stamp_labels
+            detail_item.setText(
+                0,
+                "Current — Dot: {}  |  PostageStamps: {}".format(
+                    dot_label,
+                    stamp_labels
+                )
             )
-            table.setItem(
-                row,
-                2,
-                QtWidgets.QTableWidgetItem(current_text)
-            )
+            detail_item.setFlags(QtCore.Qt.ItemIsEnabled)
 
-            name_combo = QtWidgets.QComboBox()
-            name_combo.setEditable(True)
-            name_combo.addItems(candidate["choices"])
-            name_combo.setCurrentText(candidate["preferred_name"])
-            table.setCellWidget(row, 3, name_combo)
-
-            preview_item = QtWidgets.QTableWidgetItem()
-            table.setItem(row, 4, preview_item)
+            result_detail_item = QtWidgets.QTreeWidgetItem(item)
+            result_detail_item.setFirstColumnSpanned(True)
+            result_detail_item.setFlags(QtCore.Qt.ItemIsEnabled)
 
             row_data = {
                 "candidate": candidate,
-                "check_item": check_item,
+                "item": item,
                 "name_combo": name_combo,
-                "preview_item": preview_item,
-                "safe": checked,
+                "current_text": current_text,
+                "result_detail_item": result_detail_item,
+                "safe": safe,
             }
             self._rows.append(row_data)
-            name_combo.currentTextChanged.connect(
-                lambda _text, data=row_data: self._update_preview(data)
-            )
-            self._update_preview(row_data)
 
-        table.resizeRowsToContents()
-        table.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            4,
-            QtWidgets.QHeaderView.Stretch
-        )
-        return table
+            if name_combo is not None:
+                name_combo.currentTextChanged.connect(
+                    lambda _text, data=row_data: self._update_preview(data)
+                )
+
+            self._update_preview(row_data)
 
     def _update_preview(self, row_data):
         """Update one row's proposed From/To labels."""
-        name = _clean_text(row_data["name_combo"].currentText())
-        stamp_count = len(row_data["candidate"]["connections"])
-        row_data["preview_item"].setText(
-            "Dot: From {name} | {count} PostageStamp(s): To {name}".format(
-                name=name,
-                count=stamp_count
+        if row_data["name_combo"] is None:
+            name = row_data["candidate"]["preferred_name"]
+        else:
+            name = _clean_text(row_data["name_combo"].currentText())
+
+        row_data["item"].setText(
+            1,
+            "{} → To {}".format(row_data["current_text"], name)
+        )
+        row_data["result_detail_item"].setText(
+            0,
+            "Result — Dot: {}  |  PostageStamps: To {}".format(
+                _clean_text(_from_label(name)),
+                name
             )
         )
 
     def _set_checked(self, predicate):
         """Set row checkboxes according to predicate."""
         for row_data in self._rows:
-            row_data["check_item"].setCheckState(
+            row_data["item"].setCheckState(
+                0,
                 QtCore.Qt.Checked
                 if predicate(row_data)
                 else QtCore.Qt.Unchecked
@@ -310,10 +341,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         resolutions = []
 
         for row_data in self._rows:
-            if row_data["check_item"].checkState() != QtCore.Qt.Checked:
+            if row_data["item"].checkState(0) != QtCore.Qt.Checked:
                 continue
 
-            name = _clean_text(row_data["name_combo"].currentText())
+            if row_data["name_combo"] is None:
+                name = row_data["candidate"]["preferred_name"]
+            else:
+                name = _clean_text(row_data["name_combo"].currentText())
 
             if name:
                 resolutions.append((row_data["candidate"], name))
@@ -346,7 +380,7 @@ def clean_up_connector_labels():
 
     for candidate, canonical_name in resolutions:
         candidate["dot"]["label"].setValue(
-            "From {}".format(canonical_name)
+            _from_label(canonical_name)
         )
 
         for stamp, _stamp_name in candidate["connections"]:
