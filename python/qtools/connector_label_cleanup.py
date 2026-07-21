@@ -258,11 +258,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             current_text = (
                 " / ".join(current_names)
                 if safe
-                else "Multiple"
+                else "Multiple ({})".format(len(candidate["connections"]))
             )
             affected_count = 1 + len(candidate["connections"])
-            node_word = "node" if affected_count == 1 else "nodes"
-            impact_text = "{} {}".format(affected_count, node_word)
             item = QtWidgets.QTreeWidgetItem(
                 parent,
                 ["", current_text, ""]
@@ -280,17 +278,6 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
             if not safe:
                 name_combo = QtWidgets.QComboBox()
-                name_combo.setEditable(True)
-                name_combo.setMinimumWidth(500)
-                name_combo.addItems(candidate["choices"])
-                name_combo.setCurrentText(preferred_name)
-                name_combo.view().setMinimumWidth(650)
-                self.tree.setItemWidget(item, 2, name_combo)
-
-            option_buttons = []
-
-            if not safe:
-                button_group = QtWidgets.QButtonGroup(self)
 
                 for option_name in candidate["choices"]:
                     count = next(
@@ -302,48 +289,24 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                         ),
                         0
                     )
-                    option_item = QtWidgets.QTreeWidgetItem(item)
-                    option_button = QtWidgets.QRadioButton()
-
-                    if count:
-                        stamp_word = (
-                            "PostageStamp"
-                            if count == 1
-                            else "PostageStamps"
-                        )
-                        option_button.setText(
-                            "{} — {} {}".format(
-                                option_name,
-                                count,
-                                stamp_word
-                            )
-                        )
-                    else:
-                        option_button.setText(
-                            "{} — current Dot label".format(option_name)
-                        )
-
-                    button_group.addButton(option_button)
-                    self.tree.setItemWidget(
-                        option_item,
-                        1,
-                        option_button
+                    option_text = (
+                        "{} ({})".format(option_name, count)
+                        if count
+                        else "{} (Dot)".format(option_name)
                     )
-                    option_button.clicked.connect(
-                        lambda checked, name=option_name,
-                        combo=name_combo: (
-                            combo.setCurrentText(name)
-                            if checked
-                            else None
-                        )
-                    )
-                    option_buttons.append((option_name, option_button))
+                    name_combo.addItem(option_text, option_name)
+
+                preferred_index = name_combo.findData(preferred_name)
+                name_combo.setCurrentIndex(
+                    preferred_index if preferred_index >= 0 else 0
+                )
+                self.tree.setItemWidget(item, 2, name_combo)
 
             detail_item = QtWidgets.QTreeWidgetItem(item)
             detail_item.setFirstColumnSpanned(True)
             dot_label = _clean_text(candidate["dot"]["label"].value())
             stamp_summary = ", ".join(
-                "{} ×{}".format(name, count)
+                "{} ({})".format(name, count)
                 for name, count in candidate["stamp_name_counts"]
             )
             detail_item.setText(
@@ -363,50 +326,40 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "candidate": candidate,
                 "item": item,
                 "name_combo": name_combo,
-                "option_buttons": option_buttons,
                 "current_text": current_text,
-                "impact_text": impact_text,
+                "affected_count": affected_count,
                 "result_detail_item": result_detail_item,
                 "safe": safe,
             }
             self._rows.append(row_data)
 
             if name_combo is not None:
-                name_combo.currentTextChanged.connect(
-                    lambda _text, data=row_data: self._resolution_changed(data)
+                name_combo.currentIndexChanged.connect(
+                    lambda _index, data=row_data: self._update_preview(data)
                 )
 
-            self._resolution_changed(row_data)
-
-    def _resolution_changed(self, row_data):
-        """Synchronize expanded choices and refresh the compact preview."""
-        if row_data["name_combo"] is not None:
-            selected_name = _clean_text(
-                row_data["name_combo"].currentText()
-            )
-
-            for option_name, option_button in row_data["option_buttons"]:
-                option_button.setChecked(
-                    option_name.lower() == selected_name.lower()
-                )
-
-        self._update_preview(row_data)
+            self._update_preview(row_data)
 
     def _update_preview(self, row_data):
         """Update one row's proposed From/To labels."""
         if row_data["name_combo"] is None:
             name = row_data["candidate"]["preferred_name"]
         else:
-            name = _clean_text(row_data["name_combo"].currentText())
+            name = _clean_text(row_data["name_combo"].currentData())
 
-        row_data["item"].setText(
-            1,
-            "{} → To {}  •  {}".format(
+        if row_data["safe"]:
+            change_text = "{} → To {} ({})".format(
                 row_data["current_text"],
                 name,
-                row_data["impact_text"]
+                row_data["affected_count"]
             )
-        )
+        else:
+            change_text = "{} → To {}".format(
+                row_data["current_text"],
+                name
+            )
+
+        row_data["item"].setText(1, change_text)
         row_data["result_detail_item"].setText(
             0,
             "Result — Dot: {}  |  PostageStamps: To {}".format(
@@ -453,8 +406,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             for row_data in selected_rows
         )
         self.summary_label.setText(
-            "Selected: {groups} group(s)  •  {dots} Dot(s)  •  "
-            "{stamps} PostageStamp(s)  •  {total} total nodes".format(
+            "Selected: Groups ({groups})  •  Dots ({dots})  •  "
+            "PostageStamps ({stamps})  •  Total nodes ({total})".format(
                 groups=len(selected_rows),
                 dots=dot_count,
                 stamps=stamp_count,
@@ -495,7 +448,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             if row_data["name_combo"] is None:
                 name = row_data["candidate"]["preferred_name"]
             else:
-                name = _clean_text(row_data["name_combo"].currentText())
+                name = _clean_text(row_data["name_combo"].currentData())
 
             if name:
                 resolutions.append((row_data["candidate"], name))
