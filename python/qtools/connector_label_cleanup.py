@@ -140,12 +140,22 @@ def _collect_candidates():
 
         dot_name = _connector_name(dot["label"].value())
         choices = _unique_names(stamp_names + [dot_name])
+        count_by_name = {
+            name.lower(): count
+            for name, count in stamp_name_counts
+        }
+        choices.sort(
+            key=lambda name: (
+                -count_by_name.get(name.lower(), 0),
+                0 if name.lower() == dot_name.lower() else 1,
+            )
+        )
         candidate = {
             "dot": dot,
             "connections": connections,
             "choices": choices,
             "stamp_name_counts": stamp_name_counts,
-            "preferred_name": stamp_names[0],
+            "preferred_name": choices[0],
         }
 
         if len(stamp_names) == 1:
@@ -300,7 +310,26 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 name_combo.setCurrentIndex(
                     preferred_index if preferred_index >= 0 else 0
                 )
-                self.tree.setItemWidget(item, 2, name_combo)
+
+                resolution_widget = QtWidgets.QWidget()
+                resolution_layout = QtWidgets.QHBoxLayout(
+                    resolution_widget
+                )
+                resolution_layout.setContentsMargins(0, 0, 0, 0)
+                resolution_layout.setSpacing(4)
+                resolution_layout.addWidget(name_combo, 1)
+
+                previous_button = QtWidgets.QToolButton()
+                previous_button.setText("‹")
+                previous_button.setToolTip("Show previous connected node")
+                resolution_layout.addWidget(previous_button)
+
+                next_button = QtWidgets.QToolButton()
+                next_button.setText("›")
+                next_button.setToolTip("Show next connected node")
+                resolution_layout.addWidget(next_button)
+
+                self.tree.setItemWidget(item, 2, resolution_widget)
 
             detail_item = QtWidgets.QTreeWidgetItem(item)
             detail_item.setFirstColumnSpanned(True)
@@ -329,6 +358,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "current_text": current_text,
                 "affected_count": affected_count,
                 "result_detail_item": result_detail_item,
+                "view_index": -1,
                 "safe": safe,
             }
             self._rows.append(row_data)
@@ -336,6 +366,16 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             if name_combo is not None:
                 name_combo.currentIndexChanged.connect(
                     lambda _index, data=row_data: self._update_preview(data)
+                )
+                previous_button.clicked.connect(
+                    lambda _checked=False, data=row_data: (
+                        self._show_connected_node(data, -1)
+                    )
+                )
+                next_button.clicked.connect(
+                    lambda _checked=False, data=row_data: (
+                        self._show_connected_node(data, 1)
+                    )
                 )
 
             self._update_preview(row_data)
@@ -367,6 +407,31 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 name
             )
         )
+
+    def _show_connected_node(self, row_data, direction):
+        """Cycle through and frame nodes in one conflicting group."""
+        candidate = row_data["candidate"]
+        nodes = [candidate["dot"]] + [
+            stamp
+            for stamp, _name in candidate["connections"]
+        ]
+
+        if not nodes:
+            return
+
+        if row_data["view_index"] < 0:
+            row_data["view_index"] = 0 if direction > 0 else len(nodes) - 1
+        else:
+            row_data["view_index"] = (
+                row_data["view_index"] + direction
+            ) % len(nodes)
+        node = nodes[row_data["view_index"]]
+
+        for selected_node in nuke.selectedNodes():
+            selected_node.setSelected(False)
+
+        node.setSelected(True)
+        nuke.zoomToFitSelected()
 
     def _item_changed(self, item, column):
         """Refresh highlighting and totals after a checkbox changes."""

@@ -885,18 +885,15 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
 
     def _show_selected_node(self):
-        """Center the Node Graph on the selected menu source."""
+        """Select and frame the menu source in the Node Graph."""
         source = self.selected_source()
 
         if source is None:
             return
 
-        center = [
-            source.xpos() + source.screenWidth() / 2.0,
-            source.ypos() + source.screenHeight() / 2.0,
-        ]
-        scale = nuke.zoom()
-        nuke.zoom(scale if scale and scale > 0 else 1, center)
+        _deselect_all()
+        source.setSelected(True)
+        nuke.zoomToFitSelected()
 
         self.search_field.setFocus()
 
