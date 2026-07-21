@@ -281,7 +281,22 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self._original_selection = list(nuke.selectedNodes())
         self.setWindowTitle("Connector Label clean up")
         self.setWindowModality(QtCore.Qt.NonModal)
-        self.resize(1100, 650)
+
+        screen = (
+            parent.screen()
+            if parent is not None and hasattr(parent, "screen")
+            else QtWidgets.QApplication.primaryScreen()
+        )
+        maximum_height = int(
+            screen.availableGeometry().height() * 0.8
+        ) if screen is not None else 800
+        row_count = len(safe) + len(conflicts) + len(unnamed) + 3
+        desired_height = 240 + row_count * 34
+        window_height = min(
+            maximum_height,
+            max(650, desired_height)
+        )
+        self.resize(1100, window_height)
 
         conflict_texts = [
             _choice_text(candidate, option_name)
@@ -298,10 +313,21 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         )
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel(
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.addWidget(QtWidgets.QLabel(
             "Choose the connector groups to normalize. Expand a row only "
             "when you need to inspect its current labels."
         ))
+        header_layout.addStretch()
+        self.reload_button = QtWidgets.QPushButton("Reload")
+        self.reload_button.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload)
+        )
+        self.reload_button.setToolTip(
+            "Rescan the current comp and rebuild this cleanup review."
+        )
+        header_layout.addWidget(self.reload_button)
+        layout.addLayout(header_layout)
         self.summary_label = QtWidgets.QLabel()
         layout.addWidget(self.summary_label)
 
@@ -409,6 +435,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         clear_button.clicked.connect(self._clear_selection)
         cancel_button.clicked.connect(self.reject)
         apply_button.clicked.connect(self._apply_selected)
+        self.reload_button.clicked.connect(self._reload)
+
+    def _reload(self):
+        """Close this snapshot and rebuild it from the current comp."""
+        self.close()
+        QtCore.QTimer.singleShot(0, clean_up_connector_labels)
 
     def _add_rows(self, parent, candidates, safe, unnamed=False):
         """Add compact candidate rows beneath a status group."""
