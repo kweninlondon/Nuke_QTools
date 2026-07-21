@@ -19,3 +19,9 @@ script_cleanup_menu.addCommand(
     "from qtools import dot_note_cleanup; "
     "dot_note_cleanup.clean_up_selected_dots()",
 )
+
+script_cleanup_menu.addCommand(
+    "Connector Label clean up",
+    "from qtools import connector_label_cleanup; "
+    "connector_label_cleanup.clean_up_connector_labels()",
+)

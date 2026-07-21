@@ -73,6 +73,7 @@ SUPPORTED_TARGET_CLASSES = {
 SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "PostageStampCreator"
 SETTING_HIDE_TO = "hide_to_dots"
+SETTING_SHOW_ONLY_FROM = "show_only_from_dots"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
 
@@ -146,6 +147,8 @@ def _node_display_text(node):
         # To To Source
         if dot_label.lower().startswith("to "):
             dot_label = dot_label[3:].strip()
+        elif dot_label.lower().startswith("from "):
+            dot_label = dot_label[5:].strip()
 
         if dot_label:
             return dot_label
@@ -645,7 +648,9 @@ def _create_named_read_dot(source):
         return None
 
     if "label" in dot.knobs():
-        dot["label"].setValue(dialog.dot_name())
+        dot["label"].setValue(
+            "From {}".format(dialog.dot_name())
+        )
 
     if "hide_input" in dot.knobs():
         dot["hide_input"].setValue(False)
@@ -695,6 +700,13 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             _setting_bool(SETTING_HIDE_TO, True)
         )
 
+        self.show_only_from_checkbox = QtWidgets.QCheckBox(
+            "Show only From"
+        )
+        self.show_only_from_checkbox.setChecked(
+            _setting_bool(SETTING_SHOW_ONLY_FROM, False)
+        )
+
         self.show_combo = QtWidgets.QComboBox()
         self.show_combo.addItems(["Dots", "Read", "All"])
         saved_show = str(
@@ -735,6 +747,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.show_node_button.setEnabled(False)
         button_layout.addWidget(self.show_node_button)
         button_layout.addWidget(self.hide_to_checkbox)
+        button_layout.addWidget(self.show_only_from_checkbox)
         button_layout.addWidget(self.create_dot_checkbox)
         button_layout.addStretch()
 
@@ -777,6 +790,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             self._save_settings_and_repopulate
         )
 
+        self.show_only_from_checkbox.toggled.connect(
+            self._save_settings_and_repopulate
+        )
+
         self.show_combo.currentTextChanged.connect(
             self._save_settings_and_repopulate
         )
@@ -790,6 +807,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self._settings.setValue(
             SETTING_HIDE_TO,
             self.hide_to_checkbox.isChecked()
+        )
+        self._settings.setValue(
+            SETTING_SHOW_ONLY_FROM,
+            self.show_only_from_checkbox.isChecked()
         )
         self._settings.setValue(
             SETTING_SHOW,
@@ -961,11 +982,22 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                     dot["label"].value()
                 )
 
+                is_from_label = dot_label.lower().startswith("from ")
+
+                if (
+                    self.show_only_from_checkbox.isChecked()
+                    and not is_from_label
+                ):
+                    continue
+
                 if (
                     self.hide_to_checkbox.isChecked()
                     and dot_label.lower().startswith("to ")
                 ):
                     continue
+
+                if self.show_only_from_checkbox.isChecked():
+                    dot_label = dot_label[5:].strip()
 
                 self._add_entry(
                     dot_label,
