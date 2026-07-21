@@ -266,6 +266,13 @@ def _create_postage_stamp(source):
         inpanel=False
     )
 
+    if not stamp.canSetInput(0, source):
+        nuke.delete(stamp)
+        stamp = nuke.createNode(
+            "Dot",
+            inpanel=False
+        )
+
     target_x = stamp.xpos()
     target_y = stamp.ypos()
 
