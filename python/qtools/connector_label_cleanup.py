@@ -9,6 +9,7 @@ except ImportError:
 
 
 FROM_LABEL_WRAP_LENGTH = 20
+_ACTIVE_DIALOG = None
 
 
 def _clean_text(value):
@@ -167,6 +168,28 @@ def _collect_candidates():
     return sorted(safe, key=sort_key), sorted(conflicts, key=sort_key)
 
 
+def _choice_count(candidate, option_name):
+    """Return the PostageStamp count for one resolution choice."""
+    return next(
+        (
+            count
+            for name, count in candidate["stamp_name_counts"]
+            if name.lower() == option_name.lower()
+        ),
+        0
+    )
+
+
+def _choice_text(candidate, option_name):
+    """Return compact dropdown text for one resolution choice."""
+    count = _choice_count(candidate, option_name)
+
+    if count:
+        return "{} ({})".format(option_name, count)
+
+    return "{} (Dot)".format(option_name)
+
+
 class ConnectorCleanupDialog(QtWidgets.QDialog):
     """Preview and choose connector-label cleanup operations."""
 
@@ -180,7 +203,22 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self._original_center = list(nuke.center())
         self._original_selection = list(nuke.selectedNodes())
         self.setWindowTitle("Connector Label clean up")
+        self.setWindowModality(QtCore.Qt.NonModal)
         self.resize(1100, 650)
+
+        conflict_texts = [
+            _choice_text(candidate, option_name)
+            for candidate in conflicts
+            for option_name in candidate["choices"]
+        ]
+        conflict_text_width = max(
+            self.fontMetrics().horizontalAdvance(text)
+            for text in conflict_texts or ["Conflict resolution"]
+        )
+        self._combo_width = max(
+            160,
+            conflict_text_width + 45
+        )
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
@@ -258,7 +296,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_conflicts_button.clicked.connect(self._select_conflicts)
         clear_button.clicked.connect(self._clear_selection)
         cancel_button.clicked.connect(self.reject)
-        apply_button.clicked.connect(self.accept)
+        apply_button.clicked.connect(self._apply_selected)
 
     def _add_rows(self, parent, candidates, safe):
         """Add compact candidate rows beneath a status group."""
@@ -288,43 +326,22 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             )
 
             name_combo = None
+            change_label = None
 
             if not safe:
                 name_combo = QtWidgets.QComboBox()
 
                 for option_name in candidate["choices"]:
-                    count = next(
-                        (
-                            option_count
-                            for counted_name, option_count
-                            in candidate["stamp_name_counts"]
-                            if counted_name.lower() == option_name.lower()
-                        ),
-                        0
+                    name_combo.addItem(
+                        _choice_text(candidate, option_name),
+                        option_name
                     )
-                    option_text = (
-                        "{} ({})".format(option_name, count)
-                        if count
-                        else "{} (Dot)".format(option_name)
-                    )
-                    name_combo.addItem(option_text, option_name)
 
                 preferred_index = name_combo.findData(preferred_name)
                 name_combo.setCurrentIndex(
                     preferred_index if preferred_index >= 0 else 0
                 )
-                widest_text = max(
-                    (
-                        name_combo.itemText(index)
-                        for index in range(name_combo.count())
-                    ),
-                    key=len
-                )
-                combo_width = (
-                    name_combo.fontMetrics().horizontalAdvance(widest_text)
-                    + 45
-                )
-                name_combo.setFixedWidth(max(160, combo_width))
+                name_combo.setFixedWidth(self._combo_width)
 
                 resolution_widget = QtWidgets.QWidget()
                 resolution_layout = QtWidgets.QHBoxLayout(
@@ -332,8 +349,6 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 )
                 resolution_layout.setContentsMargins(0, 0, 0, 0)
                 resolution_layout.setSpacing(4)
-                resolution_layout.addWidget(name_combo, 1)
-
                 previous_button = QtWidgets.QToolButton()
                 previous_button.setText("‹")
                 previous_button.setToolTip("Show previous connected node")
@@ -342,15 +357,24 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     arrow_font.pointSizeF() * 1.25
                 )
                 previous_button.setFont(arrow_font)
-                resolution_layout.addWidget(previous_button)
-
-                resolution_layout.addWidget(QtWidgets.QLabel("Show"))
+                change_widget = QtWidgets.QWidget()
+                change_layout = QtWidgets.QHBoxLayout(change_widget)
+                change_layout.setContentsMargins(0, 0, 0, 0)
+                change_layout.setSpacing(4)
+                change_layout.addWidget(QtWidgets.QLabel("Show:"))
+                change_layout.addWidget(previous_button)
 
                 next_button = QtWidgets.QToolButton()
                 next_button.setText("›")
                 next_button.setToolTip("Show next connected node")
                 next_button.setFont(arrow_font)
-                resolution_layout.addWidget(next_button)
+                change_layout.addWidget(next_button)
+                change_label = QtWidgets.QLabel()
+                change_layout.addWidget(change_label)
+                change_layout.addStretch()
+
+                self.tree.setItemWidget(item, 1, change_widget)
+                resolution_layout.addWidget(name_combo)
                 resolution_layout.addStretch()
 
                 self.tree.setItemWidget(item, 2, resolution_widget)
@@ -379,6 +403,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "candidate": candidate,
                 "item": item,
                 "name_combo": name_combo,
+                "change_label": change_label,
                 "current_text": current_text,
                 "affected_count": affected_count,
                 "result_detail_item": result_detail_item,
@@ -423,7 +448,10 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 name
             )
 
-        row_data["item"].setText(1, change_text)
+        if row_data["change_label"] is None:
+            row_data["item"].setText(1, change_text)
+        else:
+            row_data["change_label"].setText(change_text)
         row_data["result_detail_item"].setText(
             0,
             "Result — Dot: {}  |  PostageStamps: To {}".format(
@@ -506,6 +534,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         for column in range(1, self.tree.columnCount()):
             row_data["item"].setForeground(column, brush)
 
+        if row_data["change_label"] is not None:
+            row_data["change_label"].setStyleSheet(
+                "color: #d9822b;" if checked else ""
+            )
+
     def _update_summary(self):
         """Show a live total of all currently checked updates."""
         selected_rows = [
@@ -568,9 +601,30 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         return resolutions
 
+    def _apply_selected(self):
+        """Apply checked resolutions, then close the review window."""
+        for candidate, canonical_name in self.selected_resolutions():
+            candidate["dot"]["label"].setValue(
+                _from_label(canonical_name)
+            )
+
+            for stamp, _stamp_name in candidate["connections"]:
+                stamp["label"].setValue(
+                    "To {}".format(canonical_name)
+                )
+
+        self.accept()
+
 
 def clean_up_connector_labels():
     """Review and normalize PostageStamp and source-Dot label pairs."""
+    global _ACTIVE_DIALOG
+
+    if _ACTIVE_DIALOG is not None and _ACTIVE_DIALOG.isVisible():
+        _ACTIVE_DIALOG.raise_()
+        _ACTIVE_DIALOG.activateWindow()
+        return _ACTIVE_DIALOG
+
     safe, conflicts = _collect_candidates()
 
     if not safe and not conflicts:
@@ -580,27 +634,17 @@ def clean_up_connector_labels():
         )
         return 0
 
-    dialog = ConnectorCleanupDialog(
+    _ACTIVE_DIALOG = ConnectorCleanupDialog(
         safe,
         conflicts,
         parent=_nuke_main_window()
     )
+    _ACTIVE_DIALOG.finished.connect(_clear_active_dialog)
+    _ACTIVE_DIALOG.show()
+    return _ACTIVE_DIALOG
 
-    if dialog.exec() != QtWidgets.QDialog.Accepted:
-        return 0
 
-    resolutions = dialog.selected_resolutions()
-    updated_stamps = 0
-
-    for candidate, canonical_name in resolutions:
-        candidate["dot"]["label"].setValue(
-            _from_label(canonical_name)
-        )
-
-        for stamp, _stamp_name in candidate["connections"]:
-            stamp["label"].setValue(
-                "To {}".format(canonical_name)
-            )
-            updated_stamps += 1
-
-    return updated_stamps
+def _clear_active_dialog(_result):
+    """Release the modeless cleanup window after it closes."""
+    global _ACTIVE_DIALOG
+    _ACTIVE_DIALOG = None
