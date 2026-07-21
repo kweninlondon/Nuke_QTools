@@ -363,12 +363,25 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         button_layout = QtWidgets.QHBoxLayout()
         select_all_button = QtWidgets.QPushButton("Select All")
+        select_all_button.setToolTip(
+            "Select every safe, conflicting, and named Unnamed group."
+        )
         select_safe_button = QtWidgets.QPushButton("Select Safe")
+        select_safe_button.setToolTip(
+            "Select only groups with one unambiguous connector name."
+        )
         select_conflicts_button = QtWidgets.QPushButton(
             "Select Conflicts"
         )
+        select_conflicts_button.setToolTip(
+            "Select only groups containing competing PostageStamp names."
+        )
         select_unnamed_button = QtWidgets.QPushButton("Select Unnamed")
+        select_unnamed_button.setToolTip(
+            "Select Unnamed groups that have a connector name entered."
+        )
         clear_button = QtWidgets.QPushButton("Clear Selection")
+        clear_button.setToolTip("Uncheck every proposed cleanup operation.")
         button_layout.addWidget(select_all_button)
         button_layout.addWidget(select_safe_button)
         button_layout.addWidget(select_conflicts_button)
@@ -377,7 +390,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         button_layout.addStretch()
 
         cancel_button = QtWidgets.QPushButton("Cancel")
+        cancel_button.setToolTip(
+            "Close without changing any connector labels or input visibility."
+        )
         apply_button = QtWidgets.QPushButton("Apply Selected")
+        apply_button.setToolTip(
+            "Apply the checked label fixes and hide their PostageStamp inputs."
+        )
         apply_button.setDefault(True)
         button_layout.addWidget(cancel_button)
         button_layout.addWidget(apply_button)
@@ -423,6 +442,10 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 0,
                 QtCore.Qt.Checked if safe else QtCore.Qt.Unchecked
             )
+            item.setToolTip(
+                0,
+                "Check this connector group to include it when applying fixes."
+            )
 
             name_combo = None
             name_field = None
@@ -432,9 +455,15 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 if unnamed:
                     name_field = QtWidgets.QLineEdit()
                     name_field.setPlaceholderText("Enter connector name...")
+                    name_field.setToolTip(
+                        "Enter the shared name to use after From and To."
+                    )
                     name_field.setFixedWidth(self._combo_width)
                 else:
                     name_combo = QtWidgets.QComboBox()
+                    name_combo.setToolTip(
+                        "Choose the canonical name for this conflicting group."
+                    )
 
                     for option_name in candidate["choices"]:
                         name_combo.addItem(
@@ -729,7 +758,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             )
 
     def _select_all(self):
-        self._set_checked(lambda _row: True)
+        self._set_checked(
+            lambda row: (
+                not row["unnamed"]
+                or bool(_clean_text(row["name_field"].text()))
+            )
+        )
 
     def _select_safe(self):
         self._set_checked(lambda row: row["safe"])
@@ -740,7 +774,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         )
 
     def _select_unnamed(self):
-        self._set_checked(lambda row: row["unnamed"])
+        self._set_checked(
+            lambda row: (
+                row["unnamed"]
+                and bool(_clean_text(row["name_field"].text()))
+            )
+        )
 
     def _clear_selection(self):
         self._set_checked(lambda _row: False)

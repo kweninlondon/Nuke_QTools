@@ -593,6 +593,9 @@ class DotNameDialog(QtWidgets.QDialog):
         self.frame_name_button = QtWidgets.QPushButton(
             "Use frame name"
         )
+        self.frame_name_button.setToolTip(
+            "Replace the Dot name with the Read filename without its frame token."
+        )
         name_layout.addWidget(self.name_field)
         name_layout.addWidget(self.frame_name_button)
         layout.addLayout(name_layout)
@@ -600,6 +603,12 @@ class DotNameDialog(QtWidgets.QDialog):
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok
             | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.button(QtWidgets.QDialogButtonBox.Ok).setToolTip(
+            "Create the Dot using the entered name."
+        )
+        buttons.button(QtWidgets.QDialogButtonBox.Cancel).setToolTip(
+            "Cancel without creating the Dot or PostageStamp."
         )
         layout.addWidget(buttons)
 
@@ -699,6 +708,12 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
 
         title_layout = QtWidgets.QHBoxLayout()
+        self.cleanup_button = QtWidgets.QPushButton("🔨")
+        self.cleanup_button.setToolTip(
+            "Close this source picker and open Connector Label clean up."
+        )
+        self.cleanup_button.setAccessibleName("Open connector cleanup")
+        title_layout.addWidget(self.cleanup_button)
         title_layout.addWidget(QtWidgets.QLabel("Select the source:"))
         title_layout.addStretch()
         title_layout.addWidget(QtWidgets.QLabel("Show:"))
@@ -709,12 +724,18 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.hide_to_checkbox.setChecked(
             _setting_bool(SETTING_HIDE_TO, True)
         )
+        self.hide_to_checkbox.setToolTip(
+            'Hide Dot sources whose labels begin with "To ".'
+        )
 
         self.show_only_from_checkbox = QtWidgets.QCheckBox(
             'Show only "From" Dots'
         )
         self.show_only_from_checkbox.setChecked(
             _setting_bool(SETTING_SHOW_ONLY_FROM, True)
+        )
+        self.show_only_from_checkbox.setToolTip(
+            'Show only Dot sources whose labels begin with "From ".'
         )
 
         self.show_combo = QtWidgets.QComboBox()
@@ -726,6 +747,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.show_combo.setCurrentIndex(
             show_index if show_index >= 0 else 0
         )
+        self.show_combo.setToolTip(
+            "Choose whether the source list contains Dots, Reads, or both."
+        )
         title_layout.addWidget(self.show_combo)
 
         self.create_dot_checkbox = QtWidgets.QCheckBox(
@@ -733,6 +757,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
         self.create_dot_checkbox.setChecked(
             _setting_bool(SETTING_CREATE_DOT, True)
+        )
+        self.create_dot_checkbox.setToolTip(
+            "Create a named Dot from a chosen Read before creating its PostageStamp."
         )
 
         layout.addLayout(title_layout)
@@ -755,6 +782,9 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         button_layout = QtWidgets.QHBoxLayout()
         self.show_node_button = QtWidgets.QPushButton("Show")
         self.show_node_button.setEnabled(False)
+        self.show_node_button.setToolTip(
+            "Select and frame the highlighted source in the Node Graph."
+        )
         button_layout.addWidget(self.show_node_button)
         button_layout.addWidget(self.hide_to_checkbox)
         button_layout.addWidget(self.show_only_from_checkbox)
@@ -762,7 +792,13 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         button_layout.addStretch()
 
         self.cancel_button = QtWidgets.QPushButton("Cancel")
-        self.create_button = QtWidgets.QPushButton("Select")
+        self.cancel_button.setToolTip(
+            "Close this window without creating or connecting anything."
+        )
+        self.create_button = QtWidgets.QPushButton("Create or Connect")
+        self.create_button.setToolTip(
+            "Use the highlighted source to create or connect the requested nodes."
+        )
 
         self.create_button.setDefault(True)
         self.create_button.setEnabled(False)
@@ -794,6 +830,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         self.show_node_button.clicked.connect(
             self._show_selected_node
+        )
+
+        self.cleanup_button.clicked.connect(
+            self._open_connector_cleanup
         )
 
         self.hide_to_checkbox.toggled.connect(
@@ -900,6 +940,16 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         nuke.zoomToFitSelected()
 
         self.search_field.setFocus()
+
+    def _open_connector_cleanup(self):
+        """Close this picker, then open the modeless cleanup window."""
+        from qtools import connector_label_cleanup
+
+        self.reject()
+        QtCore.QTimer.singleShot(
+            0,
+            connector_label_cleanup.clean_up_connector_labels
+        )
 
     def _restore_graph_view(self):
         """Restore the Node Graph state from before the dialog opened."""
