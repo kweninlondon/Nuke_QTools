@@ -191,7 +191,10 @@ def _collect_candidates():
         }
         choices.sort(
             key=lambda name: (
-                -count_by_name.get(name.lower(), 0),
+                -(
+                    count_by_name.get(name.lower(), 0)
+                    + (1 if name.lower() == dot_name.lower() else 0)
+                ),
                 0 if name.lower() == dot_name.lower() else 1,
             )
         )
@@ -205,7 +208,7 @@ def _collect_candidates():
             "preferred_name": choices[0],
         }
 
-        if len(stamp_names) <= 1:
+        if len(choices) == 1:
             expected_dot_label = _clean_text(
                 _from_label(candidate["preferred_name"])
             ).lower()
@@ -469,7 +472,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     "Unnamed"
                     if unnamed
                     else "Multiple ({})".format(
-                        len(candidate["connections"])
+                        len(candidate["choices"])
                     )
                 )
             )
