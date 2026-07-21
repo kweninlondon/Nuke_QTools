@@ -73,7 +73,7 @@ SUPPORTED_TARGET_CLASSES = {
 SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "PostageStampCreator"
 SETTING_HIDE_TO = "hide_to_dots"
-SETTING_SHOW_ONLY_FROM = "show_only_from_dots"
+SETTING_SHOW_ONLY_FROM = "show_only_from_dots_v2"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
 
@@ -694,17 +694,17 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         title_layout.addWidget(QtWidgets.QLabel("Show:"))
 
         self.hide_to_checkbox = QtWidgets.QCheckBox(
-            'Hide "To"'
+            'Hide "To" Dots'
         )
         self.hide_to_checkbox.setChecked(
             _setting_bool(SETTING_HIDE_TO, True)
         )
 
         self.show_only_from_checkbox = QtWidgets.QCheckBox(
-            "Show only From"
+            'Show only "From" Dots'
         )
         self.show_only_from_checkbox.setChecked(
-            _setting_bool(SETTING_SHOW_ONLY_FROM, False)
+            _setting_bool(SETTING_SHOW_ONLY_FROM, True)
         )
 
         self.show_combo = QtWidgets.QComboBox()
