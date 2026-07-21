@@ -88,6 +88,24 @@ def _unique_names(names):
     return unique
 
 
+def _unique_texts(values):
+    """Return clean text values without case-insensitive duplicates."""
+    unique = []
+    seen = set()
+
+    for value in values:
+        value = _clean_text(value)
+        key = value.lower()
+
+        if not value or key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(value)
+
+    return unique
+
+
 def _collect_candidates():
     """Collect eligible connections, grouped by their source Dot."""
     connections_by_dot = {}
@@ -139,6 +157,21 @@ def _collect_candidates():
             )
             stamp_name_counts.append((stamp_name, count))
 
+        raw_stamp_labels = _unique_texts(
+            _clean_text(stamp["label"].value())
+            for stamp, _name in connections
+        )
+        raw_stamp_label_counts = []
+
+        for raw_label in raw_stamp_labels:
+            count = sum(
+                1
+                for stamp, _name in connections
+                if _clean_text(stamp["label"].value()).lower()
+                == raw_label.lower()
+            )
+            raw_stamp_label_counts.append((raw_label, count))
+
         dot_name = _connector_name(dot["label"].value())
         choices = _unique_names(stamp_names + [dot_name])
         count_by_name = {
@@ -156,10 +189,30 @@ def _collect_candidates():
             "connections": connections,
             "choices": choices,
             "stamp_name_counts": stamp_name_counts,
+            "raw_stamp_label_counts": raw_stamp_label_counts,
             "preferred_name": choices[0],
         }
 
         if len(stamp_names) == 1:
+            expected_dot_label = _clean_text(
+                _from_label(candidate["preferred_name"])
+            ).lower()
+            expected_stamp_label = "to {}".format(
+                candidate["preferred_name"]
+            ).lower()
+            dot_is_healthy = (
+                _clean_text(dot["label"].value()).lower()
+                == expected_dot_label
+            )
+            stamps_are_healthy = all(
+                _clean_text(stamp["label"].value()).lower()
+                == expected_stamp_label
+                for stamp, _name in connections
+            )
+
+            if dot_is_healthy and stamps_are_healthy:
+                continue
+
             safe.append(candidate)
         else:
             conflicts.append(candidate)
@@ -236,7 +289,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.NoSelection
         )
-        self.tree.setUniformRowHeights(True)
+        self.tree.setUniformRowHeights(False)
         self.tree.setStyleSheet(
             "QTreeWidget::item { padding-top: 3px; padding-bottom: 3px; }"
         )
@@ -373,6 +426,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 change_layout.addWidget(change_label)
                 change_layout.addStretch()
 
+                item.setText(1, "")
+                item.setSizeHint(1, QtCore.QSize(0, 30))
                 self.tree.setItemWidget(item, 1, change_widget)
                 resolution_layout.addWidget(name_combo)
                 resolution_layout.addStretch()
@@ -384,7 +439,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             dot_label = _clean_text(candidate["dot"]["label"].value())
             stamp_summary = ", ".join(
                 "{} ({})".format(name, count)
-                for name, count in candidate["stamp_name_counts"]
+                for name, count in candidate["raw_stamp_label_counts"]
             )
             detail_item.setText(
                 0,
@@ -629,8 +684,7 @@ def clean_up_connector_labels():
 
     if not safe and not conflicts:
         nuke.message(
-            "No labelled, hidden-input PostageStamp-to-Dot "
-            "connections were found."
+            "All eligible connector labels are already clean."
         )
         return 0
 
