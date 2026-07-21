@@ -3,9 +3,9 @@
 import nuke
 
 try:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError:
-    from PySide2 import QtCore, QtWidgets
+    from PySide2 import QtCore, QtGui, QtWidgets
 
 
 FROM_LABEL_WRAP_LENGTH = 20
@@ -163,6 +163,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             "Choose the connector groups to normalize. Expand a row only "
             "when you need to inspect its current labels."
         ))
+        self.summary_label = QtWidgets.QLabel()
+        layout.addWidget(self.summary_label)
 
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(len(self.HEADERS))
@@ -173,6 +175,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             QtWidgets.QAbstractItemView.NoSelection
         )
         self.tree.setUniformRowHeights(True)
+        self.tree.setStyleSheet(
+            "QTreeWidget::item { padding-top: 3px; padding-bottom: 3px; }"
+        )
         layout.addWidget(self.tree)
 
         safe_group = QtWidgets.QTreeWidgetItem(
@@ -190,6 +195,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         conflict_group.setFirstColumnSpanned(True)
         conflict_group.setExpanded(True)
         self._add_rows(conflict_group, conflicts, safe=False)
+
+        self.tree.itemChanged.connect(self._item_changed)
+
+        for row_data in self._rows:
+            self._update_row_style(row_data)
+
+        self._update_summary()
 
         header = self.tree.header()
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
@@ -236,6 +248,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 if safe
                 else "Multiple"
             )
+            affected_count = 1 + len(candidate["connections"])
+            node_word = "node" if affected_count == 1 else "nodes"
+            impact_text = "{} {}".format(affected_count, node_word)
             item = QtWidgets.QTreeWidgetItem(
                 parent,
                 ["", current_text, ""]
@@ -283,6 +298,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "item": item,
                 "name_combo": name_combo,
                 "current_text": current_text,
+                "impact_text": impact_text,
                 "result_detail_item": result_detail_item,
                 "safe": safe,
             }
@@ -304,13 +320,64 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         row_data["item"].setText(
             1,
-            "{} → To {}".format(row_data["current_text"], name)
+            "{} → To {}  •  {}".format(
+                row_data["current_text"],
+                name,
+                row_data["impact_text"]
+            )
         )
         row_data["result_detail_item"].setText(
             0,
             "Result — Dot: {}  |  PostageStamps: To {}".format(
                 _clean_text(_from_label(name)),
                 name
+            )
+        )
+
+    def _item_changed(self, item, column):
+        """Refresh highlighting and totals after a checkbox changes."""
+        if column != 0:
+            return
+
+        for row_data in self._rows:
+            if row_data["item"] is item:
+                self._update_row_style(row_data)
+                self._update_summary()
+                return
+
+    def _update_row_style(self, row_data):
+        """Highlight checked connector rows in Nuke-style orange."""
+        checked = (
+            row_data["item"].checkState(0) == QtCore.Qt.Checked
+        )
+        brush = (
+            QtGui.QBrush(QtGui.QColor("#d9822b"))
+            if checked
+            else QtGui.QBrush()
+        )
+
+        for column in range(1, self.tree.columnCount()):
+            row_data["item"].setForeground(column, brush)
+
+    def _update_summary(self):
+        """Show a live total of all currently checked updates."""
+        selected_rows = [
+            row_data
+            for row_data in self._rows
+            if row_data["item"].checkState(0) == QtCore.Qt.Checked
+        ]
+        dot_count = len(selected_rows)
+        stamp_count = sum(
+            len(row_data["candidate"]["connections"])
+            for row_data in selected_rows
+        )
+        self.summary_label.setText(
+            "Selected: {groups} group(s)  •  {dots} Dot(s)  •  "
+            "{stamps} PostageStamp(s)  •  {total} total nodes".format(
+                groups=len(selected_rows),
+                dots=dot_count,
+                stamps=stamp_count,
+                total=dot_count + stamp_count
             )
         )
 
