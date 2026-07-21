@@ -577,6 +577,7 @@ class DotNameDialog(QtWidgets.QDialog):
         self.name_field = QtWidgets.QLineEdit(
             _read_display_text(source)
         )
+        self.name_field.setMinimumWidth(560)
         self.frame_name_button = QtWidgets.QPushButton(
             "Use frame name"
         )
@@ -1225,7 +1226,12 @@ def create_or_retarget_postage_stamp():
         source.Class() == "Read"
         and _setting_bool(SETTING_CREATE_DOT, True)
     ):
-        return _create_named_read_dot(source)
+        dot = _create_named_read_dot(source)
+
+        if dot is None:
+            return None
+
+        return _create_postage_stamp(dot)
 
     return _create_postage_stamp(source)
 

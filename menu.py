@@ -11,3 +11,11 @@ qtools_menu.addCommand(
     "postage_stamp_creator.create_or_retarget_postage_stamp()",
     "Alt+Y",
 )
+
+script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
+
+script_cleanup_menu.addCommand(
+    "Dot Note clean up",
+    "from qtools import dot_note_cleanup; "
+    "dot_note_cleanup.clean_up_selected_dots()",
+)
