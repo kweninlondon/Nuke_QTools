@@ -141,10 +141,33 @@ def _duplicate_preferred_name(candidate):
     return alternatives[0][0]
 
 
+def _upstream_read(node):
+    """Return a Read reached through an input chain of Dots."""
+    visited = set()
+    current = node
+
+    while current is not None and current not in visited:
+        visited.add(current)
+
+        if current.Class() == "Read":
+            return current
+
+        if current.Class() != "Dot":
+            return None
+
+        try:
+            current = current.input(0)
+        except Exception:
+            return None
+
+    return None
+
+
 def _numbered_duplicate_name(base_name, candidate, index, used_names):
     """Return a stable unique name for a duplicated connector Dot."""
-    upstream = candidate["dot"].input(0)
-    frame_name = _read_frame_name(upstream)
+    frame_name = _read_frame_name(
+        _upstream_read(candidate["dot"])
+    )
     suffix = frame_name or str(index)
     proposed = "{} ({})".format(base_name, suffix)
     attempt = 2
@@ -322,9 +345,22 @@ def _collect_candidates():
 
         for index, candidate in enumerate(grouped_candidates):
             preferred_name = _duplicate_preferred_name(candidate)
+            frame_name = _read_frame_name(
+                _upstream_read(candidate["dot"])
+            )
+            frame_based_name = (
+                "{} ({})".format(base_name, frame_name)
+                if frame_name
+                else ""
+            )
 
             if preferred_name and preferred_name.lower() not in used_names:
                 suggested_name = preferred_name
+            elif (
+                frame_based_name
+                and frame_based_name.lower() not in used_names
+            ):
+                suggested_name = frame_based_name
             elif base_name.lower() not in used_names:
                 suggested_name = base_name
             else:
@@ -499,18 +535,38 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         duplicate_group = QtWidgets.QTreeWidgetItem(
             self.tree,
-            ["Duplicates ({}) — confirm unique names".format(
+            ["Duplicates ({}) — same connector name; confirm unique results".format(
                 len(duplicates)
             )]
         )
         duplicate_group.setFirstColumnSpanned(True)
         duplicate_group.setExpanded(True)
-        self._add_rows(
-            duplicate_group,
-            duplicates,
-            safe=False,
-            duplicate=True
-        )
+        duplicates_by_name = {}
+
+        for candidate in duplicates:
+            duplicates_by_name.setdefault(
+                candidate["dot_name"].lower(),
+                []
+            ).append(candidate)
+
+        for duplicate_key in sorted(duplicates_by_name):
+            grouped_duplicates = duplicates_by_name[duplicate_key]
+            duplicate_name = grouped_duplicates[0]["dot_name"]
+            name_group = QtWidgets.QTreeWidgetItem(
+                duplicate_group,
+                ["{} ({})".format(
+                    duplicate_name,
+                    len(grouped_duplicates)
+                )]
+            )
+            name_group.setFirstColumnSpanned(True)
+            name_group.setExpanded(True)
+            self._add_rows(
+                name_group,
+                grouped_duplicates,
+                safe=False,
+                duplicate=True
+            )
 
         unnamed_group = QtWidgets.QTreeWidgetItem(
             self.tree,
@@ -628,7 +684,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     "Unnamed"
                     if unnamed
                     else (
-                        dot_name
+                        "Duplicate: {}".format(dot_name)
                         if duplicate
                         else "Multiple ({})".format(
                             len(candidate["choices"])

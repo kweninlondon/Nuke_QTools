@@ -139,6 +139,28 @@ def _read_display_text(node):
     return node_name
 
 
+def _upstream_read(node):
+    """Return a Read reached through an input chain of Dots."""
+    visited = set()
+    current = node
+
+    while current is not None and current not in visited:
+        visited.add(current)
+
+        if current.Class() == "Read":
+            return current
+
+        if current.Class() != "Dot":
+            return None
+
+        try:
+            current = current.input(0)
+        except Exception:
+            return None
+
+    return None
+
+
 def _node_display_text(node):
     """
     Return the source text used in labels.
@@ -1187,23 +1209,17 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                 label_indexes[label_key] = duplicate_index + 1
                 display_label = dot_label
 
-                if label_counts[label_key] > 1 and duplicate_index:
-                    try:
-                        upstream = dot.input(0)
-                    except Exception:
-                        upstream = None
+                if label_counts[label_key] > 1:
+                    frame_name = _read_frame_name(
+                        _upstream_read(dot)
+                    )
 
-                    frame_name = (
-                        _read_frame_name(upstream)
-                        if upstream is not None
-                        and upstream.Class() == "Read"
-                        else ""
-                    )
-                    suffix = frame_name or str(duplicate_index)
-                    display_label = "{} ({})".format(
-                        dot_label,
-                        suffix
-                    )
+                    if frame_name or duplicate_index:
+                        suffix = frame_name or str(duplicate_index)
+                        display_label = "{} ({})".format(
+                            dot_label,
+                            suffix
+                        )
 
                 self._add_entry(
                     display_label,
