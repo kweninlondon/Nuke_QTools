@@ -1144,6 +1144,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         show_sources = self.show_combo.currentText()
 
         if show_sources in {"Dots", "All"}:
+            dot_entries = []
+
             for dot in _labelled_dots(
                 excluded_nodes=self._excluded_nodes
             ):
@@ -1168,8 +1170,43 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                 if self.show_only_from_checkbox.isChecked():
                     dot_label = dot_label[5:].strip()
 
+                dot_entries.append((dot, dot_label))
+
+            label_counts = {}
+
+            for _dot, dot_label in dot_entries:
+                label_counts[dot_label.lower()] = (
+                    label_counts.get(dot_label.lower(), 0) + 1
+                )
+
+            label_indexes = {}
+
+            for dot, dot_label in dot_entries:
+                label_key = dot_label.lower()
+                duplicate_index = label_indexes.get(label_key, 0)
+                label_indexes[label_key] = duplicate_index + 1
+                display_label = dot_label
+
+                if label_counts[label_key] > 1 and duplicate_index:
+                    try:
+                        upstream = dot.input(0)
+                    except Exception:
+                        upstream = None
+
+                    frame_name = (
+                        _read_frame_name(upstream)
+                        if upstream is not None
+                        and upstream.Class() == "Read"
+                        else ""
+                    )
+                    suffix = frame_name or str(duplicate_index)
+                    display_label = "{} ({})".format(
+                        dot_label,
+                        suffix
+                    )
+
                 self._add_entry(
-                    dot_label,
+                    display_label,
                     dot
                 )
 
