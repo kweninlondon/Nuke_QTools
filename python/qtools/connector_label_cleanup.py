@@ -727,7 +727,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 item.setSizeHint(1, QtCore.QSize(0, 30))
                 self.tree.setItemWidget(item, 1, change_widget)
                 resolution_layout.addWidget(
-                    name_field if unnamed else name_combo
+                    name_field if name_field is not None else name_combo
                 )
                 resolution_layout.addStretch()
 
