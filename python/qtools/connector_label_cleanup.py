@@ -619,6 +619,9 @@ def _convert_stamp_candidate(candidate, native_name):
         replacement.setInput(0, source_dot)
         replacement["label"].setValue("To {}".format(native_name))
 
+        if "postage_stamp" in replacement.knobs():
+            replacement["postage_stamp"].setValue(True)
+
         if "hide_input" in replacement.knobs():
             replacement["hide_input"].setValue(True)
 
