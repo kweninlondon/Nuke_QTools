@@ -332,7 +332,7 @@ def _configure_postage_stamp(stamp, source):
     _set_target_label(stamp, source)
 
 
-def _create_postage_stamp(source):
+def _create_postage_stamp(source, target_position=None, frame_new=True):
     """
     Create a PostageStamp using Nuke's native node placement.
 
@@ -357,8 +357,12 @@ def _create_postage_stamp(source):
             inpanel=False
         )
 
-    target_x = stamp.xpos()
-    target_y = stamp.ypos()
+    if target_position is None:
+        target_x = stamp.xpos()
+        target_y = stamp.ypos()
+    else:
+        target_x = int(target_position[0] - stamp.screenWidth() / 2)
+        target_y = int(target_position[1] - stamp.screenHeight() / 2)
 
     try:
         stamp.setInput(0, source)
@@ -380,7 +384,9 @@ def _create_postage_stamp(source):
     # Restore the position after connecting the source.
     stamp.setXYpos(target_x, target_y)
     stamp.setSelected(True)
-    nuke.zoomToFitSelected()
+
+    if frame_new:
+        nuke.zoomToFitSelected()
 
     return stamp
 
@@ -701,6 +707,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self._on_source_selected = on_source_selected
         self._entries = []
         self._settings = _settings()
+        self._graph_click_position = None
+        self._show_was_used = False
 
         self.setWindowTitle("Select Source")
         self.setWindowModality(QtCore.Qt.NonModal)
@@ -708,6 +716,11 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         self._build_ui()
         self._populate()
+
+        application = QtWidgets.QApplication.instance()
+
+        if application is not None:
+            application.installEventFilter(self)
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -904,7 +917,10 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self._populate()
 
     def eventFilter(self, watched, event):
-        """Move the source selection with arrows while search keeps focus."""
+        """Handle search keys and remember Node Graph click positions."""
+        if event.type() == QtCore.QEvent.MouseButtonPress:
+            self._record_graph_click(watched, event)
+
         if (
             watched is self.search_field
             and event.type() == QtCore.QEvent.KeyPress
@@ -921,6 +937,51 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             watched,
             event
         )
+
+    def _record_graph_click(self, watched, event):
+        """Record a left-click position in Nuke's Node Graph."""
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+
+        graph_widget = watched
+
+        while graph_widget is not None:
+            try:
+                class_name = graph_widget.metaObject().className()
+                object_name = graph_widget.objectName()
+            except Exception:
+                class_name = ""
+                object_name = ""
+
+            identity = "{} {}".format(
+                class_name,
+                object_name
+            ).lower()
+
+            if "dag" in identity or "nodegraph" in identity:
+                break
+
+            graph_widget = graph_widget.parentWidget()
+
+        if graph_widget is None:
+            return
+
+        try:
+            global_position = event.globalPos()
+            local_position = graph_widget.mapFromGlobal(global_position)
+            graph_center = nuke.center()
+            graph_zoom = nuke.zoom()
+
+            self._graph_click_position = (
+                graph_center[0]
+                + (local_position.x() - graph_widget.width() / 2)
+                / graph_zoom,
+                graph_center[1]
+                + (local_position.y() - graph_widget.height() / 2)
+                / graph_zoom,
+            )
+        except Exception:
+            self._graph_click_position = None
 
     def _move_selection(self, direction):
         """Move to the next visible, enabled source entry."""
@@ -964,6 +1025,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         _deselect_all()
         source.setSelected(True)
         nuke.zoomToFitSelected()
+        self._show_was_used = True
 
         self.search_field.setFocus()
 
@@ -993,7 +1055,11 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.accept()
 
         if self._on_source_selected is not None:
-            self._on_source_selected(source)
+            self._on_source_selected(
+                source,
+                self._graph_click_position,
+                self._show_was_used
+            )
 
     def _reopen(self):
         """Reopen this source-selection request after connector cleanup."""
@@ -1288,11 +1354,20 @@ def _release_source_dialog(dialog):
     """Release the retained source dialog after it closes."""
     global _source_dialog
 
+    application = QtWidgets.QApplication.instance()
+
+    if application is not None:
+        application.removeEventFilter(dialog)
+
     if _source_dialog is dialog:
         _source_dialog = None
 
 
-def _create_from_chosen_source(source):
+def _create_from_chosen_source(
+    source,
+    target_position=None,
+    frame_new=False
+):
     """Create the requested connector from a menu-selected source."""
     reconnected = _reconnect_matching_disconnected_targets(source)
 
@@ -1308,9 +1383,17 @@ def _create_from_chosen_source(source):
         if dot is None:
             return None
 
-        return _create_postage_stamp(dot)
+        return _create_postage_stamp(
+            dot,
+            target_position=target_position,
+            frame_new=frame_new
+        )
 
-    return _create_postage_stamp(source)
+    return _create_postage_stamp(
+        source,
+        target_position=target_position,
+        frame_new=frame_new
+    )
 
 
 def create_or_retarget_postage_stamp():
@@ -1356,7 +1439,7 @@ def create_or_retarget_postage_stamp():
     if _all_selected_are_retargetable(selected_nodes):
         return _choose_source(
             excluded_nodes=selected_nodes,
-            on_source_selected=lambda source: _retarget_nodes(
+            on_source_selected=lambda source, _position, _shown: _retarget_nodes(
                 targets=selected_nodes,
                 source=source
             )
