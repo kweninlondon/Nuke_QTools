@@ -77,6 +77,7 @@ SETTING_SHOW_ONLY_FROM = "show_only_from_dots_v2"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
 FROM_LABEL_WRAP_LENGTH = 20
+_source_dialog = None
 
 
 def _clean_text(value):
@@ -688,14 +689,21 @@ class SourceSelectionDialog(QtWidgets.QDialog):
     Target nodes can be excluded to prevent self-connections.
     """
 
-    def __init__(self, excluded_nodes=None, parent=None):
+    def __init__(
+        self,
+        excluded_nodes=None,
+        on_source_selected=None,
+        parent=None
+    ):
         super(SourceSelectionDialog, self).__init__(parent)
 
         self._excluded_nodes = set(excluded_nodes or [])
+        self._on_source_selected = on_source_selected
         self._entries = []
         self._settings = _settings()
 
         self.setWindowTitle("Select Source")
+        self.setWindowModality(QtCore.Qt.NonModal)
         self.resize(460, 520)
 
         self._build_ui()
@@ -843,7 +851,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
 
         self.create_button.clicked.connect(
-            self.accept
+            self._connect_selected_source
         )
 
         self.show_node_button.clicked.connect(
@@ -967,14 +975,32 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         QtCore.QTimer.singleShot(
             0,
             lambda: connector_label_cleanup.clean_up_connector_labels(
-                on_close=create_or_retarget_postage_stamp
+                on_close=self._reopen
             )
         )
 
     def _accept_selected_item(self, _item):
-        """Accept the dialog when a valid item is double-clicked."""
-        if self.selected_source() is not None:
-            self.accept()
+        """Connect to a valid item when it is double-clicked."""
+        self._connect_selected_source()
+
+    def _connect_selected_source(self):
+        """Run the requested connection action for the selected source."""
+        source = self.selected_source()
+
+        if source is None:
+            return
+
+        self.accept()
+
+        if self._on_source_selected is not None:
+            self._on_source_selected(source)
+
+    def _reopen(self):
+        """Reopen this source-selection request after connector cleanup."""
+        _choose_source(
+            excluded_nodes=self._excluded_nodes,
+            on_source_selected=self._on_source_selected
+        )
 
     def _add_entry(
         self,
@@ -1235,21 +1261,56 @@ def _nuke_main_window():
     return None
 
 
-def _choose_source(excluded_nodes=None):
+def _choose_source(excluded_nodes=None, on_source_selected=None):
     """
-    Open the source-selection window and return the chosen node.
+    Open the modeless source-selection window.
     """
+    global _source_dialog
+
     dialog = SourceSelectionDialog(
         excluded_nodes=excluded_nodes,
+        on_source_selected=on_source_selected,
         parent=_nuke_main_window()
     )
+    _source_dialog = dialog
 
-    result = dialog.exec()
+    dialog.finished.connect(
+        lambda _result: _release_source_dialog(dialog)
+    )
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
 
-    if result != QtWidgets.QDialog.Accepted:
-        return None
+    return dialog
 
-    return dialog.selected_source()
+
+def _release_source_dialog(dialog):
+    """Release the retained source dialog after it closes."""
+    global _source_dialog
+
+    if _source_dialog is dialog:
+        _source_dialog = None
+
+
+def _create_from_chosen_source(source):
+    """Create the requested connector from a menu-selected source."""
+    reconnected = _reconnect_matching_disconnected_targets(source)
+
+    if reconnected:
+        return reconnected
+
+    if (
+        source.Class() == "Read"
+        and _setting_bool(SETTING_CREATE_DOT, True)
+    ):
+        dot = _create_named_read_dot(source)
+
+        if dot is None:
+            return None
+
+        return _create_postage_stamp(dot)
+
+    return _create_postage_stamp(source)
 
 
 def create_or_retarget_postage_stamp():
@@ -1293,16 +1354,12 @@ def create_or_retarget_postage_stamp():
         return _create_postage_stamp(selected_nodes[0])
 
     if _all_selected_are_retargetable(selected_nodes):
-        source = _choose_source(
-            excluded_nodes=selected_nodes
-        )
-
-        if source is None:
-            return None
-
-        return _retarget_nodes(
-            targets=selected_nodes,
-            source=source
+        return _choose_source(
+            excluded_nodes=selected_nodes,
+            on_source_selected=lambda source: _retarget_nodes(
+                targets=selected_nodes,
+                source=source
+            )
         )
 
     if selected_nodes:
@@ -1321,28 +1378,9 @@ def create_or_retarget_postage_stamp():
 
         return _create_postage_stamp(source)
 
-    source = _choose_source()
-
-    if source is None:
-        return None
-
-    reconnected = _reconnect_matching_disconnected_targets(source)
-
-    if reconnected:
-        return reconnected
-
-    if (
-        source.Class() == "Read"
-        and _setting_bool(SETTING_CREATE_DOT, True)
-    ):
-        dot = _create_named_read_dot(source)
-
-        if dot is None:
-            return None
-
-        return _create_postage_stamp(dot)
-
-    return _create_postage_stamp(source)
+    return _choose_source(
+        on_source_selected=_create_from_chosen_source
+    )
 
 
 # Backwards-compatible function name.
