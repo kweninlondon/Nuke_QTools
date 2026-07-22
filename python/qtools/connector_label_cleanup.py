@@ -1,5 +1,8 @@
 """Consolidate labels on hidden PostageStamp-to-Dot connections."""
 
+import os
+import re
+
 import nuke
 
 try:
@@ -106,6 +109,57 @@ def _unique_texts(values):
     return unique
 
 
+def _read_frame_name(node):
+    """Return a Read filename stem without its frame-number token."""
+    if node is None or node.Class() != "Read" or "file" not in node.knobs():
+        return ""
+
+    file_path = str(node["file"].value() or "")
+    filename = os.path.basename(file_path.replace("\\", "/"))
+    stem, _extension = os.path.splitext(filename)
+
+    return re.sub(
+        r"[\W_]*(?:#+|%0?\d*d|\$F\d*)$",
+        "",
+        stem
+    )
+
+
+def _duplicate_preferred_name(candidate):
+    """Prefer a distinct PostageStamp name over its duplicated Dot name."""
+    dot_name = _connector_name(candidate["dot"]["label"].value())
+    alternatives = [
+        (name, count)
+        for name, count in candidate["stamp_name_counts"]
+        if name.lower() != dot_name.lower()
+    ]
+
+    if not alternatives:
+        return ""
+
+    alternatives.sort(key=lambda item: -item[1])
+    return alternatives[0][0]
+
+
+def _numbered_duplicate_name(base_name, candidate, index, used_names):
+    """Return a stable unique name for a duplicated connector Dot."""
+    upstream = candidate["dot"].input(0)
+    frame_name = _read_frame_name(upstream)
+    suffix = frame_name or str(index)
+    proposed = "{} ({})".format(base_name, suffix)
+    attempt = 2
+
+    while proposed.lower() in used_names:
+        proposed = "{} ({}) ({})".format(
+            base_name,
+            suffix,
+            attempt
+        )
+        attempt += 1
+
+    return proposed
+
+
 def _collect_candidates():
     """Collect eligible connections, grouped by their source Dot."""
     connections_by_dot = {}
@@ -131,8 +185,7 @@ def _collect_candidates():
             (stamp, stamp_name)
         )
 
-    safe = []
-    conflicts = []
+    candidates = []
     unnamed = []
 
     for dot, connections in connections_by_dot.items():
@@ -174,7 +227,7 @@ def _collect_candidates():
         )
 
         if not choices:
-            unnamed.append({
+            unnamed_candidate = {
                 "dot": dot,
                 "connections": connections,
                 "choices": [],
@@ -182,7 +235,8 @@ def _collect_candidates():
                 "raw_stamp_label_counts": raw_stamp_label_counts,
                 "visible_input_count": visible_input_count,
                 "preferred_name": "",
-            })
+            }
+            unnamed.append(unnamed_candidate)
             continue
 
         count_by_name = {
@@ -206,6 +260,8 @@ def _collect_candidates():
             "raw_stamp_label_counts": raw_stamp_label_counts,
             "visible_input_count": visible_input_count,
             "preferred_name": choices[0],
+            "dot_name": dot_name,
+            "healthy": False,
         }
 
         if len(choices) == 1:
@@ -229,21 +285,81 @@ def _collect_candidates():
                 for stamp, _name in connections
             )
 
-            if (
+            candidate["healthy"] = (
                 dot_is_healthy
                 and stamps_are_healthy
                 and inputs_are_healthy
-            ):
-                continue
+            )
 
-            safe.append(candidate)
-        else:
-            conflicts.append(candidate)
+        candidates.append(candidate)
+
+    candidates_by_name = {}
+
+    for candidate in candidates:
+        candidates_by_name.setdefault(
+            candidate["dot_name"].lower(),
+            []
+        ).append(candidate)
+
+    duplicate_keys = {
+        key
+        for key, grouped_candidates in candidates_by_name.items()
+        if len(grouped_candidates) > 1
+    }
+    used_names = {
+        candidate["dot_name"].lower()
+        for candidate in candidates
+        if candidate["dot_name"].lower() not in duplicate_keys
+    }
+    duplicates = []
+
+    for key in sorted(duplicate_keys):
+        grouped_candidates = sorted(
+            candidates_by_name[key],
+            key=lambda candidate: candidate["dot"].name().lower()
+        )
+        base_name = grouped_candidates[0]["dot_name"]
+
+        for index, candidate in enumerate(grouped_candidates):
+            preferred_name = _duplicate_preferred_name(candidate)
+
+            if preferred_name and preferred_name.lower() not in used_names:
+                suggested_name = preferred_name
+            elif base_name.lower() not in used_names:
+                suggested_name = base_name
+            else:
+                suggested_name = _numbered_duplicate_name(
+                    base_name,
+                    candidate,
+                    index,
+                    used_names
+                )
+
+            candidate["duplicate_name"] = suggested_name
+            used_names.add(suggested_name.lower())
+            duplicates.append(candidate)
+
+    remaining = [
+        candidate
+        for candidate in candidates
+        if candidate["dot_name"].lower() not in duplicate_keys
+    ]
+    safe = [
+        candidate
+        for candidate in remaining
+        if len(candidate["choices"]) == 1 and not candidate["healthy"]
+    ]
+    conflicts = [
+        candidate
+        for candidate in remaining
+        if len(candidate["choices"]) > 1
+    ]
 
     sort_key = lambda candidate: candidate["dot"].name().lower()
     return (
         sorted(safe, key=sort_key),
         sorted(conflicts, key=sort_key),
+        sorted(duplicates, key=sort_key),
         sorted(unnamed, key=sort_key),
     )
 
@@ -275,7 +391,15 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
     HEADERS = ["Update", "Change", "Conflict resolution"]
 
-    def __init__(self, safe, conflicts, unnamed, on_close=None, parent=None):
+    def __init__(
+        self,
+        safe,
+        conflicts,
+        duplicates,
+        unnamed,
+        on_close=None,
+        parent=None
+    ):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
@@ -292,7 +416,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         maximum_height = int(
             screen.availableGeometry().height() * 0.8
         ) if screen is not None else 800
-        row_count = len(safe) + len(conflicts) + len(unnamed) + 3
+        row_count = (
+            len(safe) + len(conflicts) + len(duplicates) + len(unnamed) + 4
+        )
         desired_height = 240 + row_count * 34
         window_height = min(
             maximum_height,
@@ -304,6 +430,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             _choice_text(candidate, option_name)
             for candidate in conflicts
             for option_name in candidate["choices"]
+        ] + [
+            candidate["duplicate_name"]
+            for candidate in duplicates
         ] + ["Enter connector name..."]
         conflict_text_width = max(
             self.fontMetrics().horizontalAdvance(text)
@@ -368,6 +497,21 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         conflict_group.setExpanded(True)
         self._add_rows(conflict_group, conflicts, safe=False)
 
+        duplicate_group = QtWidgets.QTreeWidgetItem(
+            self.tree,
+            ["Duplicates ({}) — confirm unique names".format(
+                len(duplicates)
+            )]
+        )
+        duplicate_group.setFirstColumnSpanned(True)
+        duplicate_group.setExpanded(True)
+        self._add_rows(
+            duplicate_group,
+            duplicates,
+            safe=False,
+            duplicate=True
+        )
+
         unnamed_group = QtWidgets.QTreeWidgetItem(
             self.tree,
             ["Unnamed ({}) — enter a name".format(len(unnamed))]
@@ -409,6 +553,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_conflicts_button.setToolTip(
             "Select only groups containing competing PostageStamp names."
         )
+        select_duplicates_button = QtWidgets.QPushButton(
+            "Select Duplicates"
+        )
+        select_duplicates_button.setToolTip(
+            "Select duplicated connector names using their proposed unique names."
+        )
         select_unnamed_button = QtWidgets.QPushButton("Select Unnamed")
         select_unnamed_button.setToolTip(
             "Select Unnamed groups that have a connector name entered."
@@ -418,6 +568,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         button_layout.addWidget(select_all_button)
         button_layout.addWidget(select_safe_button)
         button_layout.addWidget(select_conflicts_button)
+        button_layout.addWidget(select_duplicates_button)
         button_layout.addWidget(select_unnamed_button)
         button_layout.addWidget(clear_button)
         button_layout.addStretch()
@@ -438,6 +589,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_all_button.clicked.connect(self._select_all)
         select_safe_button.clicked.connect(self._select_safe)
         select_conflicts_button.clicked.connect(self._select_conflicts)
+        select_duplicates_button.clicked.connect(self._select_duplicates)
         select_unnamed_button.clicked.connect(self._select_unnamed)
         clear_button.clicked.connect(self._clear_selection)
         cancel_button.clicked.connect(self.reject)
@@ -454,7 +606,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             lambda: clean_up_connector_labels(on_close=on_close)
         )
 
-    def _add_rows(self, parent, candidates, safe, unnamed=False):
+    def _add_rows(
+        self,
+        parent,
+        candidates,
+        safe,
+        unnamed=False,
+        duplicate=False
+    ):
         """Add compact candidate rows beneath a status group."""
         for candidate in candidates:
             preferred_name = candidate["preferred_name"]
@@ -468,8 +627,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 else (
                     "Unnamed"
                     if unnamed
-                    else "Multiple ({})".format(
-                        len(candidate["choices"])
+                    else (
+                        dot_name
+                        if duplicate
+                        else "Multiple ({})".format(
+                            len(candidate["choices"])
+                        )
                     )
                 )
             )
@@ -484,7 +647,9 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             )
             item.setCheckState(
                 0,
-                QtCore.Qt.Checked if safe else QtCore.Qt.Unchecked
+                QtCore.Qt.Checked
+                if safe or duplicate
+                else QtCore.Qt.Unchecked
             )
             item.setToolTip(
                 0,
@@ -496,11 +661,18 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             change_label = None
 
             if not safe:
-                if unnamed:
+                if unnamed or duplicate:
                     name_field = QtWidgets.QLineEdit()
-                    name_field.setPlaceholderText("Enter connector name...")
+                    if duplicate:
+                        name_field.setText(candidate["duplicate_name"])
+                    else:
+                        name_field.setPlaceholderText(
+                            "Enter connector name..."
+                        )
                     name_field.setToolTip(
-                        "Enter the shared name to use after From and To."
+                        "Edit the unique shared name to use after From and To."
+                        if duplicate
+                        else "Enter the shared name to use after From and To."
                     )
                     name_field.setFixedWidth(self._combo_width)
                 else:
@@ -603,6 +775,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "view_index": -1,
                 "safe": safe,
                 "unnamed": unnamed,
+                "duplicate": duplicate,
             }
             self._rows.append(row_data)
 
@@ -624,7 +797,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             if name_field is not None:
                 name_field.textChanged.connect(
                     lambda _text, data=row_data: (
-                        self._unnamed_name_changed(data)
+                        self._editable_name_changed(data)
                     )
                 )
                 previous_button.clicked.connect(
@@ -640,8 +813,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
             self._update_preview(row_data)
 
-    def _unnamed_name_changed(self, row_data):
-        """Select a formerly unnamed row when a usable name is entered."""
+    def _editable_name_changed(self, row_data):
+        """Select an editable row when it contains a usable name."""
         has_name = bool(
             _clean_text(row_data["name_field"].text())
         )
@@ -661,6 +834,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             name = _clean_text(row_data["name_combo"].currentData())
 
         if row_data["safe"]:
+            change_text = "{} → To {} ({})".format(
+                row_data["current_text"],
+                name,
+                row_data["affected_count"]
+            )
+        elif row_data["duplicate"]:
             change_text = "{} → To {} ({})".format(
                 row_data["current_text"],
                 name,
@@ -790,8 +969,15 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
     def _select_conflicts(self):
         self._set_checked(
-            lambda row: not row["safe"] and not row["unnamed"]
+            lambda row: (
+                not row["safe"]
+                and not row["unnamed"]
+                and not row["duplicate"]
+            )
         )
+
+    def _select_duplicates(self):
+        self._set_checked(lambda row: row["duplicate"])
 
     def _select_unnamed(self):
         self._set_checked(
@@ -824,9 +1010,81 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         return resolutions
 
+    def _duplicate_resolution_errors(self, resolutions):
+        """Return names that would remain duplicated after selected fixes."""
+        selected_names = {
+            candidate["dot"]: name
+            for candidate, name in resolutions
+        }
+        selected_duplicate_dots = {
+            row_data["candidate"]["dot"]
+            for row_data in self._rows
+            if (
+                row_data["duplicate"]
+                and row_data["candidate"]["dot"] in selected_names
+            )
+        }
+        connected_dots = set()
+
+        for stamp in nuke.allNodes("PostageStamp"):
+            try:
+                dot = stamp.input(0)
+            except Exception:
+                continue
+
+            if (
+                dot is not None
+                and dot.Class() == "Dot"
+                and "label" in dot.knobs()
+            ):
+                connected_dots.add(dot)
+
+        final_names = {}
+
+        for dot in connected_dots:
+            name = selected_names.get(
+                dot,
+                _connector_name(dot["label"].value())
+            )
+
+            if not name:
+                continue
+
+            final_names.setdefault(name.lower(), []).append(
+                (name, dot)
+            )
+
+        errors = []
+
+        for grouped_names in final_names.values():
+            if len(grouped_names) < 2:
+                continue
+
+            if not any(
+                dot in selected_duplicate_dots
+                for _name, dot in grouped_names
+            ):
+                continue
+
+            errors.append(grouped_names[0][0])
+
+        return errors
+
     def _apply_selected(self):
         """Apply checked resolutions, then close the review window."""
-        for candidate, canonical_name in self.selected_resolutions():
+        resolutions = self.selected_resolutions()
+        duplicate_errors = self._duplicate_resolution_errors(resolutions)
+
+        if duplicate_errors:
+            nuke.message(
+                "These connector names would still be duplicated:\n\n{}\n\n"
+                "Please give each Duplicate row a unique name.".format(
+                    "\n".join(sorted(duplicate_errors, key=str.lower))
+                )
+            )
+            return
+
+        for candidate, canonical_name in resolutions:
             candidate["dot"]["label"].setValue(
                 _from_label(canonical_name)
             )
@@ -855,9 +1113,9 @@ def clean_up_connector_labels(on_close=None):
         if on_close is None:
             on_close = existing_on_close
 
-    safe, conflicts, unnamed = _collect_candidates()
+    safe, conflicts, duplicates, unnamed = _collect_candidates()
 
-    if not safe and not conflicts and not unnamed:
+    if not safe and not conflicts and not duplicates and not unnamed:
         nuke.message(
             "All eligible connector labels are already clean."
         )
@@ -870,6 +1128,7 @@ def clean_up_connector_labels(on_close=None):
     _ACTIVE_DIALOG = ConnectorCleanupDialog(
         safe,
         conflicts,
+        duplicates,
         unnamed,
         on_close=on_close,
         parent=_nuke_main_window()
