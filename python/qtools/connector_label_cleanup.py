@@ -1,4 +1,4 @@
-"""Consolidate labels on hidden PostageStamp-to-Dot connections."""
+"""Clean native connector labels and convert Stamps to native nodes."""
 
 import os
 import re
@@ -422,6 +422,235 @@ def _choice_text(candidate, option_name):
     return "{} (Dot)".format(option_name)
 
 
+def _knob_text(node, knob_name):
+    """Return cleaned text from a node knob when it exists."""
+    if node is None or knob_name not in node.knobs():
+        return ""
+
+    try:
+        return _clean_text(node[knob_name].value())
+    except Exception:
+        return ""
+
+
+def _is_stamp_node(node, identifier):
+    """Return True for a Stamps node with the requested identifier."""
+    return (
+        node is not None
+        and _knob_text(node, "identifier").lower() == identifier
+        and "title" in node.knobs()
+    )
+
+
+def _native_connector_dots():
+    """Return Dots that currently feed native PostageStamps."""
+    dots = set()
+
+    for stamp in nuke.allNodes("PostageStamp"):
+        try:
+            dot = stamp.input(0)
+        except Exception:
+            continue
+
+        if (
+            dot is not None
+            and dot.Class() == "Dot"
+            and "label" in dot.knobs()
+        ):
+            dots.add(dot)
+
+    return dots
+
+
+def _collect_stamp_candidates():
+    """Collect Stamps Anchors and their Wired Stamps for conversion."""
+    all_nodes = list(nuke.allNodes())
+    anchors = [
+        node
+        for node in all_nodes
+        if _is_stamp_node(node, "anchor")
+    ]
+    wireds = [
+        node
+        for node in all_nodes
+        if _is_stamp_node(node, "wired")
+    ]
+    wireds_by_anchor = {anchor: [] for anchor in anchors}
+    unresolved = []
+
+    for wired in wireds:
+        try:
+            physical_anchor = wired.input(0)
+        except Exception:
+            physical_anchor = None
+
+        stored_anchor = None
+        stored_name = _knob_text(wired, "anchor")
+
+        if stored_name:
+            try:
+                stored_anchor = nuke.toNode(stored_name)
+            except Exception:
+                stored_anchor = None
+
+        anchor = (
+            physical_anchor
+            if _is_stamp_node(physical_anchor, "anchor")
+            else stored_anchor
+            if _is_stamp_node(stored_anchor, "anchor")
+            else None
+        )
+
+        if anchor in wireds_by_anchor:
+            wireds_by_anchor[anchor].append(wired)
+        else:
+            unresolved.append(wired)
+
+    used_names = {
+        _connector_name(dot["label"].value()).lower()
+        for dot in _native_connector_dots()
+        if (
+            "label" in dot.knobs()
+            and _connector_name(dot["label"].value())
+        )
+    }
+    candidates = []
+
+    for anchor in sorted(anchors, key=lambda node: node.name().lower()):
+        title = _knob_text(anchor, "title") or anchor.name()
+        native_name = title
+
+        if native_name.lower() in used_names:
+            try:
+                source = anchor.input(0)
+            except Exception:
+                source = None
+
+            frame_name = _read_frame_name(_upstream_read(source))
+            suffix = frame_name or "1"
+            native_name = "{} ({})".format(title, suffix)
+            index = 2
+
+            while native_name.lower() in used_names:
+                native_name = "{} ({})".format(title, index)
+                index += 1
+
+        used_names.add(native_name.lower())
+        candidates.append({
+            "anchor": anchor,
+            "wireds": sorted(
+                wireds_by_anchor[anchor],
+                key=lambda node: node.name().lower()
+            ),
+            "title": title,
+            "native_name": native_name,
+        })
+
+    return candidates, unresolved
+
+
+def _replace_node_inputs(old_node, new_node, excluded_nodes=None):
+    """Reconnect every input using old_node to new_node."""
+    excluded_nodes = set(excluded_nodes or [])
+
+    for node in nuke.allNodes():
+        if node in excluded_nodes or node is new_node:
+            continue
+
+        try:
+            input_count = max(node.inputs(), node.maxInputs())
+        except Exception:
+            try:
+                input_count = node.inputs()
+            except Exception:
+                continue
+
+        for input_index in range(input_count):
+            try:
+                if node.input(input_index) is old_node:
+                    node.setInput(input_index, new_node)
+            except Exception:
+                continue
+
+
+def _center_node_on(replacement, original):
+    """Place replacement at the original node's visual center."""
+    replacement.setXYpos(
+        int(
+            original.xpos()
+            + (original.screenWidth() - replacement.screenWidth()) / 2
+        ),
+        int(
+            original.ypos()
+            + (original.screenHeight() - replacement.screenHeight()) / 2
+        )
+    )
+
+
+def _convert_stamp_candidate(candidate, native_name):
+    """Replace one Stamps Anchor group with native connector nodes."""
+    anchor = candidate["anchor"]
+    wireds = candidate["wireds"]
+
+    try:
+        source = anchor.input(0)
+    except Exception:
+        source = None
+
+    source_dot = nuke.nodes.Dot()
+    source_dot["label"].setValue(_from_label(native_name))
+
+    if "hide_input" in source_dot.knobs():
+        source_dot["hide_input"].setValue(False)
+
+    if source is not None:
+        source_dot.setInput(0, source)
+
+    _center_node_on(source_dot, anchor)
+    replacements = []
+
+    for wired in wireds:
+        replacement = nuke.nodes.PostageStamp()
+
+        if not replacement.canSetInput(0, source_dot):
+            nuke.delete(replacement)
+            replacement = nuke.nodes.Dot()
+
+        replacement.setInput(0, source_dot)
+        replacement["label"].setValue("To {}".format(native_name))
+
+        if "hide_input" in replacement.knobs():
+            replacement["hide_input"].setValue(True)
+
+        _center_node_on(replacement, wired)
+        replacements.append((wired, replacement))
+
+    original_nodes = set([anchor] + wireds)
+
+    for wired, replacement in replacements:
+        _replace_node_inputs(
+            wired,
+            replacement,
+            excluded_nodes=original_nodes
+        )
+
+    _replace_node_inputs(
+        anchor,
+        source_dot,
+        excluded_nodes=original_nodes
+    )
+
+    for wired in wireds:
+        nuke.delete(wired)
+
+    nuke.delete(anchor)
+
+    return [source_dot] + [
+        replacement
+        for _wired, replacement in replacements
+    ]
+
+
 class ConnectorCleanupDialog(QtWidgets.QDialog):
     """Preview and choose connector-label cleanup operations."""
 
@@ -433,12 +662,15 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         conflicts,
         duplicates,
         unnamed,
+        stamp_candidates,
+        unresolved_stamps,
         on_close=None,
         parent=None
     ):
         super(ConnectorCleanupDialog, self).__init__(parent)
 
         self._rows = []
+        self._stamp_rows = []
         self._on_close = on_close
         self._skip_on_close = False
         self.setWindowTitle("Connector Label clean up")
@@ -453,7 +685,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             screen.availableGeometry().height() * 0.8
         ) if screen is not None else 800
         row_count = (
-            len(safe) + len(conflicts) + len(duplicates) + len(unnamed) + 4
+            len(safe) + len(conflicts) + len(duplicates) + len(unnamed)
+            + len(stamp_candidates) + 5
         )
         desired_height = 240 + row_count * 34
         window_height = min(
@@ -581,10 +814,36 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             unnamed=True
         )
 
+        stamps_group = QtWidgets.QTreeWidgetItem(
+            self.tree,
+            ["Stamps ({}) — convert to native connectors".format(
+                len(stamp_candidates)
+            )]
+        )
+        stamps_group.setFirstColumnSpanned(True)
+        stamps_group.setExpanded(True)
+        self._add_stamp_rows(stamps_group, stamp_candidates)
+
+        if unresolved_stamps:
+            unresolved_item = QtWidgets.QTreeWidgetItem(
+                stamps_group,
+                ["Unresolved Wired Stamps ({}) — not converted".format(
+                    len(unresolved_stamps)
+                )]
+            )
+            unresolved_item.setFirstColumnSpanned(True)
+            unresolved_item.setToolTip(
+                0,
+                "These Wired Stamps have no resolvable Anchor and are left unchanged."
+            )
+
         self.tree.itemChanged.connect(self._item_changed)
 
         for row_data in self._rows:
             self._update_row_style(row_data)
+
+        for row_data in self._stamp_rows:
+            self._update_stamp_row_style(row_data)
 
         self._update_summary()
 
@@ -597,7 +856,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         button_layout = QtWidgets.QHBoxLayout()
         select_all_button = QtWidgets.QPushButton("Select All")
         select_all_button.setToolTip(
-            "Select every safe, conflicting, and named Unnamed group."
+            "Select every available label fix and resolved Stamps conversion."
         )
         select_safe_button = QtWidgets.QPushButton("Select Safe")
         select_safe_button.setToolTip(
@@ -619,6 +878,10 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_unnamed_button.setToolTip(
             "Select Unnamed groups that have a connector name entered."
         )
+        select_stamps_button = QtWidgets.QPushButton("Select Stamps")
+        select_stamps_button.setToolTip(
+            "Select all resolved Stamps Anchor groups for native conversion."
+        )
         clear_button = QtWidgets.QPushButton("Clear Selection")
         clear_button.setToolTip("Uncheck every proposed cleanup operation.")
         button_layout.addWidget(select_all_button)
@@ -626,6 +889,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         button_layout.addWidget(select_conflicts_button)
         button_layout.addWidget(select_duplicates_button)
         button_layout.addWidget(select_unnamed_button)
+        button_layout.addWidget(select_stamps_button)
         button_layout.addWidget(clear_button)
         button_layout.addStretch()
 
@@ -635,7 +899,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         )
         apply_button = QtWidgets.QPushButton("Apply Selected")
         apply_button.setToolTip(
-            "Apply the checked label fixes and hide their PostageStamp inputs."
+            "Apply checked label fixes and native Stamps conversions."
         )
         apply_button.setDefault(True)
         button_layout.addWidget(cancel_button)
@@ -647,6 +911,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         select_conflicts_button.clicked.connect(self._select_conflicts)
         select_duplicates_button.clicked.connect(self._select_duplicates)
         select_unnamed_button.clicked.connect(self._select_unnamed)
+        select_stamps_button.clicked.connect(self._select_stamps)
         clear_button.clicked.connect(self._clear_selection)
         cancel_button.clicked.connect(self.reject)
         apply_button.clicked.connect(self._apply_selected)
@@ -869,6 +1134,134 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
             self._update_preview(row_data)
 
+    def _add_stamp_rows(self, parent, candidates):
+        """Add editable Stamps-to-native conversion rows."""
+        for candidate in candidates:
+            item = QtWidgets.QTreeWidgetItem(parent, ["", "", ""])
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            item.setToolTip(
+                0,
+                "Check this Anchor group to replace it with native connectors."
+            )
+
+            previous_button = QtWidgets.QToolButton()
+            previous_button.setText("‹")
+            previous_button.setToolTip("Show previous Stamps node")
+            arrow_font = previous_button.font()
+            arrow_font.setPointSizeF(arrow_font.pointSizeF() * 1.25)
+            previous_button.setFont(arrow_font)
+
+            next_button = QtWidgets.QToolButton()
+            next_button.setText("›")
+            next_button.setToolTip("Show next Stamps node")
+            next_button.setFont(arrow_font)
+
+            change_widget = QtWidgets.QWidget()
+            change_layout = QtWidgets.QHBoxLayout(change_widget)
+            change_layout.setContentsMargins(0, 0, 0, 0)
+            change_layout.setSpacing(4)
+            change_layout.addWidget(QtWidgets.QLabel("Show:"))
+            change_layout.addWidget(previous_button)
+            change_layout.addWidget(next_button)
+            change_label = QtWidgets.QLabel(
+                "{} → Native (1 source + {} output{})".format(
+                    candidate["title"],
+                    len(candidate["wireds"]),
+                    "s" if len(candidate["wireds"]) != 1 else ""
+                )
+            )
+            change_layout.addWidget(change_label)
+            change_layout.addStretch()
+            self.tree.setItemWidget(item, 1, change_widget)
+
+            name_field = QtWidgets.QLineEdit(candidate["native_name"])
+            name_field.setFixedWidth(self._combo_width)
+            name_field.setToolTip(
+                "Edit the native From/To connector name used after conversion."
+            )
+            resolution_widget = QtWidgets.QWidget()
+            resolution_layout = QtWidgets.QHBoxLayout(resolution_widget)
+            resolution_layout.setContentsMargins(0, 0, 0, 0)
+            resolution_layout.addWidget(name_field)
+            resolution_layout.addStretch()
+            self.tree.setItemWidget(item, 2, resolution_widget)
+
+            detail_item = QtWidgets.QTreeWidgetItem(item)
+            detail_item.setFirstColumnSpanned(True)
+            detail_item.setFlags(QtCore.Qt.ItemIsEnabled)
+            detail_item.setText(
+                0,
+                "Result — Dot: {}  |  {} native output connector(s)".format(
+                    _clean_text(_from_label(candidate["native_name"])),
+                    len(candidate["wireds"])
+                )
+            )
+
+            row_data = {
+                "candidate": candidate,
+                "item": item,
+                "name_field": name_field,
+                "change_label": change_label,
+                "detail_item": detail_item,
+                "view_index": -1,
+            }
+            self._stamp_rows.append(row_data)
+
+            previous_button.clicked.connect(
+                lambda _checked=False, data=row_data: (
+                    self._show_stamp_node(data, -1)
+                )
+            )
+            next_button.clicked.connect(
+                lambda _checked=False, data=row_data: (
+                    self._show_stamp_node(data, 1)
+                )
+            )
+            name_field.textChanged.connect(
+                lambda _text, data=row_data: self._stamp_name_changed(data)
+            )
+
+    def _stamp_name_changed(self, row_data):
+        """Refresh a Stamps conversion preview after editing its name."""
+        name = _clean_text(row_data["name_field"].text())
+        row_data["item"].setCheckState(
+            0,
+            QtCore.Qt.Checked if name else QtCore.Qt.Unchecked
+        )
+        row_data["detail_item"].setText(
+            0,
+            (
+                "Result — Dot: {}  |  {} native output connector(s)".format(
+                    _clean_text(_from_label(name)),
+                    len(row_data["candidate"]["wireds"])
+                )
+                if name
+                else "Result — enter a connector name to convert"
+            )
+        )
+
+    def _show_stamp_node(self, row_data, direction):
+        """Cycle through one Anchor and its Wired Stamps."""
+        candidate = row_data["candidate"]
+        nodes = [candidate["anchor"]] + candidate["wireds"]
+
+        if not nodes:
+            return
+
+        if row_data["view_index"] < 0:
+            row_data["view_index"] = 0 if direction > 0 else len(nodes) - 1
+        else:
+            row_data["view_index"] = (
+                row_data["view_index"] + direction
+            ) % len(nodes)
+
+        for selected_node in nuke.selectedNodes():
+            selected_node.setSelected(False)
+
+        nodes[row_data["view_index"]].setSelected(True)
+        nuke.zoomToFitSelected()
+
     def _editable_name_changed(self, row_data):
         """Select an editable row when it contains a usable name."""
         has_name = bool(
@@ -961,6 +1354,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 self._update_summary()
                 return
 
+        for row_data in self._stamp_rows:
+            if row_data["item"] is item:
+                self._update_stamp_row_style(row_data)
+                self._update_summary()
+                return
+
     def _update_row_style(self, row_data):
         """Highlight checked connector rows in Nuke-style orange."""
         checked = (
@@ -980,6 +1379,13 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 "color: #d9822b;" if checked else ""
             )
 
+    def _update_stamp_row_style(self, row_data):
+        """Highlight checked Stamps conversion rows."""
+        checked = row_data["item"].checkState(0) == QtCore.Qt.Checked
+        row_data["change_label"].setStyleSheet(
+            "color: #d9822b;" if checked else ""
+        )
+
     def _update_summary(self):
         """Show a live total of all currently checked updates."""
         selected_rows = [
@@ -992,13 +1398,27 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             len(row_data["candidate"]["connections"])
             for row_data in selected_rows
         )
+        selected_stamp_rows = [
+            row_data
+            for row_data in self._stamp_rows
+            if row_data["item"].checkState(0) == QtCore.Qt.Checked
+        ]
+        stamp_source_count = len(selected_stamp_rows)
+        wired_count = sum(
+            len(row_data["candidate"]["wireds"])
+            for row_data in selected_stamp_rows
+        )
         self.summary_label.setText(
             "Selected: Groups ({groups})  •  Dots ({dots})  •  "
-            "PostageStamps ({stamps})  •  Total nodes ({total})".format(
-                groups=len(selected_rows),
+            "PostageStamps ({stamps})  •  Stamps conversions ({conversions})  "
+            "•  Total nodes ({total})".format(
+                groups=len(selected_rows) + stamp_source_count,
                 dots=dot_count,
                 stamps=stamp_count,
-                total=dot_count + stamp_count
+                conversions=stamp_source_count,
+                total=(
+                    dot_count + stamp_count + stamp_source_count + wired_count
+                )
             )
         )
 
@@ -1012,6 +1432,17 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 else QtCore.Qt.Unchecked
             )
 
+    def _set_stamps_checked(self, checked):
+        """Set every Stamps conversion checkbox."""
+        for row_data in self._stamp_rows:
+            has_name = bool(_clean_text(row_data["name_field"].text()))
+            row_data["item"].setCheckState(
+                0,
+                QtCore.Qt.Checked
+                if checked and has_name
+                else QtCore.Qt.Unchecked
+            )
+
     def _select_all(self):
         self._set_checked(
             lambda row: (
@@ -1019,9 +1450,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 or bool(_clean_text(row["name_field"].text()))
             )
         )
+        self._set_stamps_checked(True)
 
     def _select_safe(self):
         self._set_checked(lambda row: row["safe"])
+        self._set_stamps_checked(False)
 
     def _select_conflicts(self):
         self._set_checked(
@@ -1031,9 +1464,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 and not row["duplicate"]
             )
         )
+        self._set_stamps_checked(False)
 
     def _select_duplicates(self):
         self._set_checked(lambda row: row["duplicate"])
+        self._set_stamps_checked(False)
 
     def _select_unnamed(self):
         self._set_checked(
@@ -1042,9 +1477,15 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 and bool(_clean_text(row["name_field"].text()))
             )
         )
+        self._set_stamps_checked(False)
+
+    def _select_stamps(self):
+        self._set_checked(lambda _row: False)
+        self._set_stamps_checked(True)
 
     def _clear_selection(self):
         self._set_checked(lambda _row: False)
+        self._set_stamps_checked(False)
 
     def selected_resolutions(self):
         """Return checked candidates with their selected canonical names."""
@@ -1065,6 +1506,21 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 resolutions.append((row_data["candidate"], name))
 
         return resolutions
+
+    def selected_stamp_conversions(self):
+        """Return checked Stamps groups with their native names."""
+        conversions = []
+
+        for row_data in self._stamp_rows:
+            if row_data["item"].checkState(0) != QtCore.Qt.Checked:
+                continue
+
+            name = _clean_text(row_data["name_field"].text())
+
+            if name:
+                conversions.append((row_data["candidate"], name))
+
+        return conversions
 
     def _duplicate_resolution_errors(self, resolutions):
         """Return names that would remain duplicated after selected fixes."""
@@ -1126,9 +1582,40 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         return errors
 
+    def _stamp_resolution_errors(self, resolutions, conversions):
+        """Return Stamps conversion names that collide with native Dots."""
+        selected_names = {
+            candidate["dot"]: name
+            for candidate, name in resolutions
+        }
+        used_names = set()
+
+        for dot in _native_connector_dots():
+            if "label" not in dot.knobs():
+                continue
+
+            name = selected_names.get(
+                dot,
+                _connector_name(dot["label"].value())
+            )
+
+            if name:
+                used_names.add(name.lower())
+
+        errors = []
+
+        for _candidate, name in conversions:
+            if name.lower() in used_names:
+                errors.append(name)
+            else:
+                used_names.add(name.lower())
+
+        return errors
+
     def _apply_selected(self):
         """Apply checked resolutions, then close the review window."""
         resolutions = self.selected_resolutions()
+        conversions = self.selected_stamp_conversions()
         duplicate_errors = self._duplicate_resolution_errors(resolutions)
 
         if duplicate_errors:
@@ -1140,24 +1627,60 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             )
             return
 
-        for candidate, canonical_name in resolutions:
-            candidate["dot"]["label"].setValue(
-                _from_label(canonical_name)
-            )
+        stamp_errors = self._stamp_resolution_errors(
+            resolutions,
+            conversions
+        )
 
-            for stamp, _stamp_name in candidate["connections"]:
-                stamp["label"].setValue(
-                    "To {}".format(canonical_name)
+        if stamp_errors:
+            nuke.message(
+                "These Stamps conversions would duplicate native connector "
+                "names:\n\n{}\n\nPlease enter unique native names.".format(
+                    "\n".join(sorted(set(stamp_errors), key=str.lower))
+                )
+            )
+            return
+
+        undo = nuke.Undo()
+        undo.begin("Connector Label clean up")
+
+        try:
+            for candidate, canonical_name in resolutions:
+                candidate["dot"]["label"].setValue(
+                    _from_label(canonical_name)
                 )
 
-                if "hide_input" in stamp.knobs():
-                    stamp["hide_input"].setValue(True)
+                for stamp, _stamp_name in candidate["connections"]:
+                    stamp["label"].setValue(
+                        "To {}".format(canonical_name)
+                    )
+
+                    if "hide_input" in stamp.knobs():
+                        stamp["hide_input"].setValue(True)
+
+            for candidate, native_name in conversions:
+                _convert_stamp_candidate(candidate, native_name)
+        except Exception as error:
+            undo.end()
+
+            try:
+                nuke.undo()
+            except Exception:
+                pass
+
+            nuke.message(
+                "Connector cleanup was not completed and was rolled back."
+                "\n\n{}".format(error)
+            )
+            return
+
+        undo.end()
 
         self.accept()
 
 
 def clean_up_connector_labels(on_close=None):
-    """Review and normalize PostageStamp and source-Dot label pairs."""
+    """Review native label fixes and optional Stamps conversions."""
     global _ACTIVE_DIALOG
 
     if _ACTIVE_DIALOG is not None and _ACTIVE_DIALOG.isVisible():
@@ -1170,8 +1693,16 @@ def clean_up_connector_labels(on_close=None):
             on_close = existing_on_close
 
     safe, conflicts, duplicates, unnamed = _collect_candidates()
+    stamp_candidates, unresolved_stamps = _collect_stamp_candidates()
 
-    if not safe and not conflicts and not duplicates and not unnamed:
+    if (
+        not safe
+        and not conflicts
+        and not duplicates
+        and not unnamed
+        and not stamp_candidates
+        and not unresolved_stamps
+    ):
         nuke.message(
             "All eligible connector labels are already clean."
         )
@@ -1186,6 +1717,8 @@ def clean_up_connector_labels(on_close=None):
         conflicts,
         duplicates,
         unnamed,
+        stamp_candidates,
+        unresolved_stamps,
         on_close=on_close,
         parent=_nuke_main_window()
     )
