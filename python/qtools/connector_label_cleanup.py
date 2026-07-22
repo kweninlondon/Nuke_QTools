@@ -281,9 +281,6 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         self._rows = []
         self._on_close = on_close
         self._skip_on_close = False
-        self._original_zoom = nuke.zoom()
-        self._original_center = list(nuke.center())
-        self._original_selection = list(nuke.selectedNodes())
         self.setWindowTitle("Connector Label clean up")
         self.setWindowModality(QtCore.Qt.NonModal)
 
@@ -717,30 +714,6 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         node.setSelected(True)
         nuke.zoomToFitSelected()
-
-    def _restore_graph_view(self):
-        """Restore the Node Graph state from before the dialog opened."""
-        for node in nuke.selectedNodes():
-            try:
-                node.setSelected(False)
-            except Exception:
-                pass
-
-        for node in self._original_selection:
-            try:
-                node.setSelected(True)
-            except Exception:
-                pass
-
-        try:
-            nuke.zoom(self._original_zoom, self._original_center)
-        except Exception:
-            pass
-
-    def done(self, result):
-        """Restore the original graph view whenever the dialog closes."""
-        self._restore_graph_view()
-        super(ConnectorCleanupDialog, self).done(result)
 
     def _item_changed(self, item, column):
         """Refresh highlighting and totals after a checkbox changes."""

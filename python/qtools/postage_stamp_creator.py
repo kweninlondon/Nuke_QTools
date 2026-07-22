@@ -694,9 +694,6 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self._excluded_nodes = set(excluded_nodes or [])
         self._entries = []
         self._settings = _settings()
-        self._original_zoom = nuke.zoom()
-        self._original_center = list(nuke.center())
-        self._original_selection = list(nuke.selectedNodes())
 
         self.setWindowTitle("Select Source")
         self.resize(460, 520)
@@ -973,26 +970,6 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                 on_close=create_or_retarget_postage_stamp
             )
         )
-
-    def _restore_graph_view(self):
-        """Restore the Node Graph state from before the dialog opened."""
-        _deselect_all()
-
-        for node in self._original_selection:
-            try:
-                node.setSelected(True)
-            except Exception:
-                pass
-
-        try:
-            nuke.zoom(self._original_zoom, self._original_center)
-        except Exception:
-            pass
-
-    def done(self, result):
-        """Restore the original graph view whenever the dialog closes."""
-        self._restore_graph_view()
-        super(SourceSelectionDialog, self).done(result)
 
     def _accept_selected_item(self, _item):
         """Accept the dialog when a valid item is double-clicked."""
