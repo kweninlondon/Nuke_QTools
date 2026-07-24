@@ -78,6 +78,7 @@ SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
 SETTING_FIX_DOT_NAME = "fix_dot_name"
 FROM_LABEL_WRAP_LENGTH = 20
+READ_DOT_SEARCH_DEPTH = 6
 _source_dialog = None
 
 
@@ -336,6 +337,95 @@ def _read_nodes(excluded_nodes=None):
             node.name().lower(),
         )
     )
+
+
+def _direct_dependents(node):
+    """Return nodes whose inputs are directly connected to node."""
+    dependents = []
+
+    for candidate in nuke.allNodes():
+        try:
+            input_count = candidate.inputs()
+        except Exception:
+            continue
+
+        for input_index in range(input_count):
+            try:
+                if candidate.input(input_index) is node:
+                    dependents.append(candidate)
+                    break
+            except Exception:
+                continue
+
+    return sorted(
+        dependents,
+        key=lambda candidate: candidate.name().lower()
+    )
+
+
+def _connected_input_count(node):
+    """Return the number of currently connected inputs on node."""
+    count = 0
+
+    try:
+        input_count = node.inputs()
+    except Exception:
+        return 0
+
+    for input_index in range(input_count):
+        try:
+            if node.input(input_index) is not None:
+                count += 1
+        except Exception:
+            continue
+
+    return count
+
+
+def _nearby_from_dot(read_node):
+    """
+    Find the nearest downstream From Dot on a simple Read branch.
+
+    Traversal is limited and stops at nodes that combine multiple inputs.
+    """
+    pending = [(read_node, 0)]
+    visited = {read_node}
+
+    while pending:
+        current, depth = pending.pop(0)
+
+        if depth >= READ_DOT_SEARCH_DEPTH:
+            continue
+
+        for dependent in _direct_dependents(current):
+            if dependent in visited:
+                continue
+
+            visited.add(dependent)
+            next_depth = depth + 1
+
+            if dependent.Class() == "Dot":
+                label = (
+                    _clean_text(dependent["label"].value())
+                    if "label" in dependent.knobs()
+                    else ""
+                )
+
+                if label.lower().startswith("from "):
+                    return dependent
+
+                if label:
+                    continue
+
+            if dependent.Class() in {"Viewer", "PostageStamp"}:
+                continue
+
+            if _connected_input_count(dependent) > 1:
+                continue
+
+            pending.append((dependent, next_depth))
+
+    return None
 
 def _set_target_label(target, source):
     """Update the target label and hide its input connection."""
@@ -1479,7 +1569,10 @@ def _create_from_chosen_source(
         source.Class() == "Read"
         and _setting_bool(SETTING_CREATE_DOT, True)
     ):
-        dot = _create_named_read_dot(source)
+        dot = _nearby_from_dot(source)
+
+        if dot is None:
+            dot = _create_named_read_dot(source)
 
         if dot is None:
             return None
