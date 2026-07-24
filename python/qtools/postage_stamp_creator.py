@@ -1330,28 +1330,34 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         if source is None:
             return
 
-        if (
-            self.fix_dot_name_checkbox.isChecked()
-            and source.Class() == "Dot"
-            and "label" in source.knobs()
-        ):
-            current_label = _clean_text(source["label"].value())
+        undo = nuke.Undo()
+        undo.begin("Postage Stamp Connector")
 
-            if current_label and not current_label.lower().startswith(
-                "from "
+        try:
+            if (
+                self.fix_dot_name_checkbox.isChecked()
+                and source.Class() == "Dot"
+                and "label" in source.knobs()
             ):
-                source["label"].setValue(
-                    _from_label(_node_display_text(source))
+                current_label = _clean_text(source["label"].value())
+
+                if current_label and not current_label.lower().startswith(
+                    "from "
+                ):
+                    source["label"].setValue(
+                        _from_label(_node_display_text(source))
+                    )
+
+            self.accept()
+
+            if self._on_source_selected is not None:
+                self._on_source_selected(
+                    source,
+                    self._graph_click_position,
+                    self._show_was_used
                 )
-
-        self.accept()
-
-        if self._on_source_selected is not None:
-            self._on_source_selected(
-                source,
-                self._graph_click_position,
-                self._show_was_used
-            )
+        finally:
+            undo.end()
 
     def _reopen(self):
         """Reopen this source-selection request after connector cleanup."""

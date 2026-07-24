@@ -52,6 +52,20 @@ def _has_hidden_input(node):
         return False
 
 
+def _native_output_connectors():
+    """Return PostageStamps and hidden-input Dots labelled as To connectors."""
+    connectors = list(nuke.allNodes("PostageStamp"))
+
+    for dot in nuke.allNodes("Dot"):
+        if "label" not in dot.knobs() or not _has_hidden_input(dot):
+            continue
+
+        if _clean_text(dot["label"].value()).lower().startswith("to "):
+            connectors.append(dot)
+
+    return connectors
+
+
 def _nuke_main_window():
     """Return Nuke's main window when available."""
     application = QtWidgets.QApplication.instance()
@@ -187,7 +201,7 @@ def _collect_candidates():
     """Collect eligible connections, grouped by their source Dot."""
     connections_by_dot = {}
 
-    for stamp in nuke.allNodes("PostageStamp"):
+    for stamp in _native_output_connectors():
         if "label" not in stamp.knobs():
             continue
 
@@ -443,10 +457,10 @@ def _is_stamp_node(node, identifier):
 
 
 def _native_connector_dots():
-    """Return Dots that currently feed native PostageStamps."""
+    """Return Dots that currently feed native output connectors."""
     dots = set()
 
-    for stamp in nuke.allNodes("PostageStamp"):
+    for stamp in _native_output_connectors():
         try:
             dot = stamp.input(0)
         except Exception:
@@ -1541,7 +1555,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         }
         connected_dots = set()
 
-        for stamp in nuke.allNodes("PostageStamp"):
+        for stamp in _native_output_connectors():
             try:
                 dot = stamp.input(0)
             except Exception:
