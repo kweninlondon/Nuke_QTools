@@ -7,7 +7,6 @@ import re
 import uuid
 
 import nuke
-import nukescripts
 
 try:
     from PySide6 import QtCore, QtWidgets
@@ -15,14 +14,32 @@ except ImportError:
     from PySide2 import QtCore, QtWidgets
 
 
-PANEL_ID = "com.qtools.ShotNotes"
 PANEL_TITLE = "Shot Notes"
 NOTES_FILENAME = ".qtools_shot_notes.json"
-WIDGET_EXPRESSION = (
-    "__import__('qtools.shot_notes', "
-    "fromlist=['ShotNotesWidget']).ShotNotesWidget"
-)
-_PANEL_REGISTERED = False
+SETTINGS_ORGANISATION = "QTools"
+SETTINGS_APPLICATION = "ShotNotes"
+_FLOATING_WINDOW = None
+
+
+def _nuke_main_window():
+    """Return Nuke's main window when available."""
+    application = QtWidgets.QApplication.instance()
+
+    if application is None:
+        return None
+
+    for widget in application.topLevelWidgets():
+        try:
+            if (
+                widget.inherits("QMainWindow")
+                and widget.metaObject().className()
+                == "Foundry::UI::DockMainWindow"
+            ):
+                return widget
+        except Exception:
+            continue
+
+    return None
 
 
 def _script_path():
@@ -184,6 +201,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         layout.addWidget(self.location_label)
 
+        add_notes_header = QtWidgets.QHBoxLayout()
         self.add_notes_toggle = QtWidgets.QToolButton()
         self.add_notes_toggle.setText("ADD NOTES")
         self.add_notes_toggle.setCheckable(True)
@@ -195,7 +213,20 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self.add_notes_toggle.setToolTip(
             "Show or hide the controls for adding notes."
         )
-        layout.addWidget(self.add_notes_toggle)
+        add_notes_header.addWidget(self.add_notes_toggle)
+        add_notes_header.addStretch()
+
+        self.clipboard_button = QtWidgets.QPushButton(
+            "Add Notes from Clipboard"
+        )
+        self.clipboard_button.setToolTip(
+            "Create notes from clipboard lines and remove - or * bullets."
+        )
+        self.clipboard_button.clicked.connect(
+            self._add_notes_from_clipboard
+        )
+        add_notes_header.addWidget(self.clipboard_button)
+        layout.addLayout(add_notes_header)
 
         self.add_notes_widget = QtWidgets.QWidget()
         add_notes_layout = QtWidgets.QVBoxLayout(self.add_notes_widget)
@@ -212,25 +243,12 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         add_notes_layout.addWidget(self.note_input)
 
-        add_actions = QtWidgets.QHBoxLayout()
         self.add_button = QtWidgets.QPushButton("Add Notes")
         self.add_button.setToolTip(
             "Create one checklist item from each non-empty line."
         )
         self.add_button.clicked.connect(self._add_notes)
-        add_actions.addWidget(self.add_button)
-
-        self.clipboard_button = QtWidgets.QPushButton(
-            "Add Notes from Clipboard"
-        )
-        self.clipboard_button.setToolTip(
-            "Create notes from clipboard lines and remove - or * bullets."
-        )
-        self.clipboard_button.clicked.connect(
-            self._add_notes_from_clipboard
-        )
-        add_actions.addWidget(self.clipboard_button)
-        add_notes_layout.addLayout(add_actions)
+        add_notes_layout.addWidget(self.add_button)
         self.add_notes_widget.setVisible(False)
         layout.addWidget(self.add_notes_widget)
         self.add_notes_toggle.toggled.connect(
@@ -274,7 +292,21 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self.archives.setToolTip(
             "Expand an archive to see the completed notes from that version."
         )
-        layout.addWidget(QtWidgets.QLabel("ARCHIVES"))
+        self.archives_toggle = QtWidgets.QToolButton()
+        self.archives_toggle.setText("ARCHIVES")
+        self.archives_toggle.setCheckable(True)
+        self.archives_toggle.setChecked(True)
+        self.archives_toggle.setArrowType(QtCore.Qt.DownArrow)
+        self.archives_toggle.setToolButtonStyle(
+            QtCore.Qt.ToolButtonTextBesideIcon
+        )
+        self.archives_toggle.setToolTip(
+            "Show or hide archived completed notes."
+        )
+        self.archives_toggle.toggled.connect(
+            self._set_archives_expanded
+        )
+        layout.addWidget(self.archives_toggle)
         layout.addWidget(self.archives, 1)
 
     def _switch_folder(self, force=False):
@@ -320,6 +352,9 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
             self.archives.addTopLevelItem(parent)
 
+        self.archives_toggle.setText(
+            "ARCHIVES ({})".format(len(self._data["archives"]))
+        )
         folder = os.path.dirname(self._path) if self._path else ""
         self.location_label.setText(
             folder if folder else "Save the Nuke script to enable Shot Notes."
@@ -350,6 +385,13 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
         if expanded:
             self.note_input.setFocus()
+
+    def _set_archives_expanded(self, expanded):
+        """Show or collapse the archive history."""
+        self.archives.setVisible(expanded)
+        self.archives_toggle.setArrowType(
+            QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow
+        )
 
     def _save(self):
         """Persist the current folder's notes."""
@@ -486,36 +528,67 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self._refresh()
 
 
-def register_panel():
-    """Register Shot Notes in Nuke's Pane menu and workspace system."""
-    global _PANEL_REGISTERED
+class ShotNotesWindow(QtWidgets.QDialog):
+    """Modeless floating Shot Notes window with remembered geometry."""
 
-    if _PANEL_REGISTERED:
-        return
+    def __init__(self, parent=None):
+        super(ShotNotesWindow, self).__init__(parent)
+        self.setWindowTitle(PANEL_TITLE)
+        self.setWindowFlags(
+            QtCore.Qt.Tool
+            | QtCore.Qt.WindowTitleHint
+            | QtCore.Qt.WindowCloseButtonHint
+        )
+        self.setModal(False)
+        self.resize(430, 650)
 
-    nukescripts.panels.registerWidgetAsPanel(
-        WIDGET_EXPRESSION,
-        PANEL_TITLE,
-        PANEL_ID
-    )
-    _PANEL_REGISTERED = True
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(ShotNotesWidget(self))
+
+        settings = QtCore.QSettings(
+            SETTINGS_ORGANISATION,
+            SETTINGS_APPLICATION
+        )
+        geometry = settings.value("window_geometry")
+
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
+    def _save_geometry(self):
+        """Remember the floating window's current size and position."""
+        settings = QtCore.QSettings(
+            SETTINGS_ORGANISATION,
+            SETTINGS_APPLICATION
+        )
+        settings.setValue("window_geometry", self.saveGeometry())
+
+    def closeEvent(self, event):
+        """Hide instead of destroying so the shortcut can reopen quickly."""
+        self._save_geometry()
+        event.ignore()
+        self.hide()
+
+    def hideEvent(self, event):
+        """Persist geometry whenever the window is toggled off."""
+        self._save_geometry()
+        super(ShotNotesWindow, self).hideEvent(event)
 
 
 def show_shot_notes():
-    """Open Shot Notes in the Viewer pane when it is not already open."""
-    register_panel()
+    """Toggle the modeless floating Shot Notes window."""
+    global _FLOATING_WINDOW
 
-    existing_pane = nuke.getPaneFor(PANEL_ID)
+    if _FLOATING_WINDOW is None:
+        _FLOATING_WINDOW = ShotNotesWindow(
+            parent=_nuke_main_window()
+        )
 
-    if existing_pane is not None:
-        return existing_pane
+    if _FLOATING_WINDOW.isVisible():
+        _FLOATING_WINDOW.hide()
+        return _FLOATING_WINDOW
 
-    pane = nuke.getPaneFor("Viewer.1")
-    panel = nukescripts.panels.registerWidgetAsPanel(
-        WIDGET_EXPRESSION,
-        PANEL_TITLE,
-        PANEL_ID,
-        True
-    )
-    panel.addToPane(pane)
-    return panel
+    _FLOATING_WINDOW.show()
+    _FLOATING_WINDOW.raise_()
+    _FLOATING_WINDOW.activateWindow()
+    return _FLOATING_WINDOW
