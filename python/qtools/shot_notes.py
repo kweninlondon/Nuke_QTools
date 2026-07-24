@@ -432,7 +432,9 @@ class ShotNotesWidget(QtWidgets.QWidget):
             return
 
         QtWidgets.QApplication.clipboard().setText(
-            "\n".join("- {}".format(text) for text in texts)
+            "DONE:\n{}".format(
+                "\n".join("- {}".format(text) for text in texts)
+            )
         )
 
     def _copy_all(self):
@@ -458,8 +460,8 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
         QtWidgets.QApplication.clipboard().setText(
             "{}\n\n{}".format(
-                section("DONE", done),
-                section("LEFT TO DO", remaining)
+                section("DONE:", done),
+                section("LEFT TO DO:", remaining)
             )
         )
 
