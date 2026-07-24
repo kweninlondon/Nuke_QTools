@@ -7,6 +7,7 @@ import re
 import uuid
 
 import nuke
+import nukescripts
 
 try:
     from PySide6 import QtCore, QtWidgets
@@ -14,32 +15,14 @@ except ImportError:
     from PySide2 import QtCore, QtWidgets
 
 
+PANEL_ID = "com.qtools.ShotNotes"
 PANEL_TITLE = "Shot Notes"
 NOTES_FILENAME = ".qtools_shot_notes.json"
-SETTINGS_ORGANISATION = "QTools"
-SETTINGS_APPLICATION = "ShotNotes"
-_FLOATING_WINDOW = None
-
-
-def _nuke_main_window():
-    """Return Nuke's main window when available."""
-    application = QtWidgets.QApplication.instance()
-
-    if application is None:
-        return None
-
-    for widget in application.topLevelWidgets():
-        try:
-            if (
-                widget.inherits("QMainWindow")
-                and widget.metaObject().className()
-                == "Foundry::UI::DockMainWindow"
-            ):
-                return widget
-        except Exception:
-            continue
-
-    return None
+WIDGET_EXPRESSION = (
+    "__import__('qtools.shot_notes', "
+    "fromlist=['ShotNotesWidget']).ShotNotesWidget"
+)
+_PANEL_REGISTERED = False
 
 
 def _script_path():
@@ -528,67 +511,116 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self._refresh()
 
 
-class ShotNotesWindow(QtWidgets.QDialog):
-    """Modeless floating Shot Notes window with remembered geometry."""
+def register_panel():
+    """Register Shot Notes in Nuke's Pane menu and workspace system."""
+    global _PANEL_REGISTERED
 
-    def __init__(self, parent=None):
-        super(ShotNotesWindow, self).__init__(parent)
-        self.setWindowTitle(PANEL_TITLE)
-        self.setWindowFlags(
-            QtCore.Qt.Tool
-            | QtCore.Qt.WindowTitleHint
-            | QtCore.Qt.WindowCloseButtonHint
-        )
-        self.setModal(False)
-        self.resize(430, 650)
+    if _PANEL_REGISTERED:
+        return
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(ShotNotesWidget(self))
+    nukescripts.panels.registerWidgetAsPanel(
+        WIDGET_EXPRESSION,
+        PANEL_TITLE,
+        PANEL_ID
+    )
+    _PANEL_REGISTERED = True
 
-        settings = QtCore.QSettings(
-            SETTINGS_ORGANISATION,
-            SETTINGS_APPLICATION
-        )
-        geometry = settings.value("window_geometry")
 
-        if geometry is not None:
-            self.restoreGeometry(geometry)
+def _shot_notes_widgets():
+    """Return currently instantiated Shot Notes panel widgets."""
+    application = QtWidgets.QApplication.instance()
 
-    def _save_geometry(self):
-        """Remember the floating window's current size and position."""
-        settings = QtCore.QSettings(
-            SETTINGS_ORGANISATION,
-            SETTINGS_APPLICATION
-        )
-        settings.setValue("window_geometry", self.saveGeometry())
+    if application is None:
+        return []
 
-    def closeEvent(self, event):
-        """Hide instead of destroying so the shortcut can reopen quickly."""
-        self._save_geometry()
-        event.ignore()
-        self.hide()
+    return [
+        widget
+        for widget in application.allWidgets()
+        if isinstance(widget, ShotNotesWidget)
+    ]
 
-    def hideEvent(self, event):
-        """Persist geometry whenever the window is toggled off."""
-        self._save_geometry()
-        super(ShotNotesWindow, self).hideEvent(event)
+
+def _activate_panel_widget(widget):
+    """Make every stacked parent containing widget show its Shot Notes page."""
+    child = widget
+    parent = child.parentWidget()
+
+    while parent is not None:
+        if isinstance(parent, QtWidgets.QStackedWidget):
+            index = parent.indexOf(child)
+
+            if index >= 0:
+                parent.setCurrentIndex(index)
+
+        child = parent
+        parent = child.parentWidget()
+
+    widget.setFocus()
+
+
+def _activate_properties_tab():
+    """Activate a Properties tab in the pane currently showing Shot Notes."""
+    application = QtWidgets.QApplication.instance()
+
+    if application is None:
+        return False
+
+    for tab_bar in application.allWidgets():
+        if not isinstance(tab_bar, QtWidgets.QTabBar):
+            continue
+
+        shot_notes_index = -1
+        properties_index = -1
+
+        for index in range(tab_bar.count()):
+            tab_text = str(tab_bar.tabText(index)).replace("&", "").strip()
+
+            if tab_text == PANEL_TITLE:
+                shot_notes_index = index
+            elif tab_text == "Properties":
+                properties_index = index
+
+        if (
+            shot_notes_index >= 0
+            and properties_index >= 0
+            and tab_bar.currentIndex() == shot_notes_index
+        ):
+            tab_bar.setCurrentIndex(properties_index)
+            return True
+
+    return False
 
 
 def show_shot_notes():
-    """Toggle the modeless floating Shot Notes window."""
-    global _FLOATING_WINDOW
+    """Toggle between Shot Notes and Properties in its docked pane."""
+    register_panel()
+    widgets = _shot_notes_widgets()
 
-    if _FLOATING_WINDOW is None:
-        _FLOATING_WINDOW = ShotNotesWindow(
-            parent=_nuke_main_window()
-        )
+    if widgets:
+        widget = widgets[0]
 
-    if _FLOATING_WINDOW.isVisible():
-        _FLOATING_WINDOW.hide()
-        return _FLOATING_WINDOW
+        if widget.isVisible() and _activate_properties_tab():
+            return widget
 
-    _FLOATING_WINDOW.show()
-    _FLOATING_WINDOW.raise_()
-    _FLOATING_WINDOW.activateWindow()
-    return _FLOATING_WINDOW
+        _activate_panel_widget(widget)
+        return widget
+
+    pane = (
+        nuke.getPaneFor("Properties.1")
+        or nuke.getPaneFor("Scene Graph")
+    )
+    panel = nukescripts.panels.registerWidgetAsPanel(
+        WIDGET_EXPRESSION,
+        PANEL_TITLE,
+        PANEL_ID,
+        True
+    )
+    panel.addToPane(pane)
+    QtCore.QTimer.singleShot(
+        0,
+        lambda: [
+            _activate_panel_widget(widget)
+            for widget in _shot_notes_widgets()
+        ]
+    )
+    return panel

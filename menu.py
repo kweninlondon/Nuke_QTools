@@ -7,6 +7,8 @@ from qtools import shot_notes
 
 qtools_menu = nuke.menu("Nuke").addMenu("QTools")
 
+shot_notes.register_panel()
+
 qtools_menu.addCommand(
     "Shot Notes",
     "from qtools import shot_notes; shot_notes.show_shot_notes()",
