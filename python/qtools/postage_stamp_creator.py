@@ -79,6 +79,8 @@ SETTING_CREATE_DOT = "create_dot_for_read"
 SETTING_FIX_DOT_NAME = "fix_dot_name"
 FROM_LABEL_WRAP_LENGTH = 20
 READ_DOT_SEARCH_DEPTH = 6
+READ_DOT_COLLISION_PADDING = 20
+READ_DOT_MAX_UPWARD_SHIFT = 4000
 _source_dialog = None
 
 
@@ -380,6 +382,104 @@ def _connected_input_count(node):
             continue
 
     return count
+
+
+def _outgoing_connections(node):
+    """Return every node input directly connected to node."""
+    connections = []
+
+    for dependent in nuke.allNodes():
+        try:
+            input_count = dependent.inputs()
+        except Exception:
+            continue
+
+        for input_index in range(input_count):
+            try:
+                if dependent.input(input_index) is node:
+                    connections.append((dependent, input_index))
+            except Exception:
+                continue
+
+    return connections
+
+
+def _rectangles_overlap(first, second, padding=0):
+    """Return True when two Node Graph rectangles overlap."""
+    first_x, first_y, first_width, first_height = first
+    second_x, second_y, second_width, second_height = second
+
+    return not (
+        first_x + first_width + padding <= second_x
+        or second_x + second_width + padding <= first_x
+        or first_y + first_height + padding <= second_y
+        or second_y + second_height + padding <= first_y
+    )
+
+
+def _placement_is_clear(rectangle, ignored_nodes):
+    """Return True when rectangle does not overlap another graph node."""
+    ignored_nodes = set(ignored_nodes)
+
+    for node in nuke.allNodes():
+        if node in ignored_nodes or node.Class() == "BackdropNode":
+            continue
+
+        node_rectangle = (
+            node.xpos(),
+            node.ypos(),
+            node.screenWidth(),
+            node.screenHeight(),
+        )
+
+        if _rectangles_overlap(
+            rectangle,
+            node_rectangle,
+            READ_DOT_COLLISION_PADDING
+        ):
+            return False
+
+    return True
+
+
+def _read_dot_upward_shift(source, dot, target_x, target_y):
+    """Return an upward shift that clears both the Read and new Dot."""
+    dot_rectangle = (
+        target_x,
+        target_y,
+        dot.screenWidth(),
+        dot.screenHeight(),
+    )
+    ignored_nodes = {source, dot}
+
+    if _placement_is_clear(dot_rectangle, ignored_nodes):
+        return 0
+
+    for shift in range(
+        READ_DOT_COLLISION_PADDING,
+        READ_DOT_MAX_UPWARD_SHIFT + READ_DOT_COLLISION_PADDING,
+        READ_DOT_COLLISION_PADDING
+    ):
+        shifted_dot_rectangle = (
+            target_x,
+            target_y - shift,
+            dot.screenWidth(),
+            dot.screenHeight(),
+        )
+        shifted_source_rectangle = (
+            source.xpos(),
+            source.ypos() - shift,
+            source.screenWidth(),
+            source.screenHeight(),
+        )
+
+        if (
+            _placement_is_clear(shifted_dot_rectangle, ignored_nodes)
+            and _placement_is_clear(shifted_source_rectangle, ignored_nodes)
+        ):
+            return shift
+
+    return 0
 
 
 def _nearby_from_dot(read_node):
@@ -762,8 +862,15 @@ def _create_named_read_dot(source):
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
 
+    dot_name = dialog.dot_name()
+    outgoing_connections = _outgoing_connections(source)
+    original_source_y = source.ypos()
     _deselect_all()
     dot = nuke.createNode("Dot", inpanel=False)
+
+    if "label" in dot.knobs():
+        dot["label"].setValue(_from_label(dot_name))
+
     source_height = source.screenHeight()
     target_x = source.xpos() + int(
         (source.screenWidth() - dot.screenWidth()) / 2
@@ -771,10 +878,38 @@ def _create_named_read_dot(source):
     target_y = source.ypos() + source_height + int(
         source_height * 1.25
     )
+    upward_shift = _read_dot_upward_shift(
+        source,
+        dot,
+        target_x,
+        target_y
+    )
+
+    if upward_shift:
+        source.setYpos(source.ypos() - upward_shift)
+        target_y -= upward_shift
+
+    rewired_connections = []
 
     try:
         dot.setInput(0, source)
+
+        for dependent, input_index in outgoing_connections:
+            if dependent is dot:
+                continue
+
+            if dependent.input(input_index) is source:
+                dependent.setInput(input_index, dot)
+                rewired_connections.append((dependent, input_index))
     except Exception as error:
+        source.setYpos(original_source_y)
+
+        for dependent, input_index in rewired_connections:
+            try:
+                dependent.setInput(input_index, source)
+            except Exception:
+                pass
+
         try:
             nuke.delete(dot)
         except Exception:
@@ -784,9 +919,6 @@ def _create_named_read_dot(source):
             "The Dot could not be connected.\n\n{}".format(error)
         )
         return None
-
-    if "label" in dot.knobs():
-        dot["label"].setValue(_from_label(dialog.dot_name()))
 
     if "hide_input" in dot.knobs():
         dot["hide_input"].setValue(False)
