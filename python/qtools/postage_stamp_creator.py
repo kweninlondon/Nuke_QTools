@@ -76,6 +76,7 @@ SETTING_HIDE_TO = "hide_to_dots"
 SETTING_SHOW_ONLY_FROM = "show_only_from_dots_v2"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
+SETTING_FIX_DOT_NAME = "fix_dot_name"
 FROM_LABEL_WRAP_LENGTH = 20
 _source_dialog = None
 
@@ -823,6 +824,17 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             "Create a named Dot from a chosen Read before creating its PostageStamp."
         )
 
+        self.fix_dot_name_checkbox = QtWidgets.QCheckBox(
+            "Fix Dot name"
+        )
+        self.fix_dot_name_checkbox.setChecked(
+            _setting_bool(SETTING_FIX_DOT_NAME, True)
+        )
+        self.fix_dot_name_checkbox.setToolTip(
+            'Normalize the chosen Dot label to "From NAME" before connecting.'
+        )
+        self._update_option_visibility()
+
         layout.addLayout(title_layout)
 
         self.search_field = QtWidgets.QLineEdit()
@@ -850,6 +862,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         button_layout.addWidget(self.hide_to_checkbox)
         button_layout.addWidget(self.show_only_from_checkbox)
         button_layout.addWidget(self.create_dot_checkbox)
+        button_layout.addWidget(self.fix_dot_name_checkbox)
         button_layout.addStretch()
 
         self.cancel_button = QtWidgets.QPushButton("Cancel")
@@ -908,8 +921,15 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         self.show_combo.currentTextChanged.connect(
             self._save_settings_and_repopulate
         )
+        self.show_combo.currentTextChanged.connect(
+            self._update_option_visibility
+        )
 
         self.create_dot_checkbox.toggled.connect(
+            self._save_settings
+        )
+
+        self.fix_dot_name_checkbox.toggled.connect(
             self._save_settings
         )
 
@@ -931,7 +951,21 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             SETTING_CREATE_DOT,
             self.create_dot_checkbox.isChecked()
         )
+        self._settings.setValue(
+            SETTING_FIX_DOT_NAME,
+            self.fix_dot_name_checkbox.isChecked()
+        )
         self._settings.sync()
+
+    def _update_option_visibility(self, _value=None):
+        """Show only options relevant to the selected source types."""
+        show_sources = self.show_combo.currentText()
+        self.create_dot_checkbox.setVisible(
+            show_sources in {"Read", "All"}
+        )
+        self.fix_dot_name_checkbox.setVisible(
+            show_sources in {"Dots", "All"}
+        )
 
     def _save_settings_and_repopulate(self, _value=None):
         """Save source filters and rebuild the visible entries."""
@@ -1073,6 +1107,20 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         if source is None:
             return
+
+        if (
+            self.fix_dot_name_checkbox.isChecked()
+            and source.Class() == "Dot"
+            and "label" in source.knobs()
+        ):
+            current_label = _clean_text(source["label"].value())
+
+            if current_label and not current_label.lower().startswith(
+                "from "
+            ):
+                source["label"].setValue(
+                    _from_label(_node_display_text(source))
+                )
 
         self.accept()
 
