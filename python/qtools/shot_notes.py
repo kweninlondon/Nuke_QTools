@@ -3,6 +3,7 @@
 import datetime
 import json
 import os
+import re
 import uuid
 
 import nuke
@@ -57,6 +58,19 @@ def _empty_data():
         "notes": [],
         "archives": [],
     }
+
+
+def _parse_note_text(value):
+    """Return clean notes, removing leading dash and asterisk bullets."""
+    notes = []
+
+    for line in str(value or "").splitlines():
+        text = re.sub(r"^\s*[-*]\s*", "", line).strip()
+
+        if text:
+            notes.append(text)
+
+    return notes
 
 
 def _load_data(path):
@@ -170,22 +184,58 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         layout.addWidget(self.location_label)
 
+        self.add_notes_toggle = QtWidgets.QToolButton()
+        self.add_notes_toggle.setText("ADD NOTES")
+        self.add_notes_toggle.setCheckable(True)
+        self.add_notes_toggle.setChecked(False)
+        self.add_notes_toggle.setArrowType(QtCore.Qt.RightArrow)
+        self.add_notes_toggle.setToolButtonStyle(
+            QtCore.Qt.ToolButtonTextBesideIcon
+        )
+        self.add_notes_toggle.setToolTip(
+            "Show or hide the controls for adding notes."
+        )
+        layout.addWidget(self.add_notes_toggle)
+
+        self.add_notes_widget = QtWidgets.QWidget()
+        add_notes_layout = QtWidgets.QVBoxLayout(self.add_notes_widget)
+        add_notes_layout.setContentsMargins(0, 0, 0, 0)
+        add_notes_layout.setSpacing(6)
+
         self.note_input = QtWidgets.QPlainTextEdit()
         self.note_input.setPlaceholderText(
             "Add a note…\nPaste multiple lines to create multiple notes."
         )
         self.note_input.setMaximumHeight(90)
         self.note_input.setToolTip(
-            "Enter one note per line, then click Add Notes."
+            "Enter one note per line. Leading - and * bullets are removed."
         )
-        layout.addWidget(self.note_input)
+        add_notes_layout.addWidget(self.note_input)
 
-        add_button = QtWidgets.QPushButton("Add Notes")
-        add_button.setToolTip(
+        add_actions = QtWidgets.QHBoxLayout()
+        self.add_button = QtWidgets.QPushButton("Add Notes")
+        self.add_button.setToolTip(
             "Create one checklist item from each non-empty line."
         )
-        add_button.clicked.connect(self._add_notes)
-        layout.addWidget(add_button)
+        self.add_button.clicked.connect(self._add_notes)
+        add_actions.addWidget(self.add_button)
+
+        self.clipboard_button = QtWidgets.QPushButton(
+            "Add Notes from Clipboard"
+        )
+        self.clipboard_button.setToolTip(
+            "Create notes from clipboard lines and remove - or * bullets."
+        )
+        self.clipboard_button.clicked.connect(
+            self._add_notes_from_clipboard
+        )
+        add_actions.addWidget(self.clipboard_button)
+        add_notes_layout.addLayout(add_actions)
+        self.add_notes_widget.setVisible(False)
+        layout.addWidget(self.add_notes_widget)
+        self.add_notes_toggle.toggled.connect(
+            self._set_add_notes_expanded
+        )
 
         self.notes_list = QtWidgets.QListWidget()
         self.notes_list.setAlternatingRowColors(True)
@@ -201,6 +251,13 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         self.copy_done_button.clicked.connect(self._copy_done)
         actions.addWidget(self.copy_done_button)
+
+        self.copy_all_button = QtWidgets.QPushButton("Copy All")
+        self.copy_all_button.setToolTip(
+            "Copy separate DONE and LEFT TO DO note lists."
+        )
+        self.copy_all_button.clicked.connect(self._copy_all)
+        actions.addWidget(self.copy_all_button)
 
         self.archive_done_button = QtWidgets.QPushButton("Archive Done")
         self.archive_done_button.setToolTip(
@@ -269,18 +326,30 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         enabled = bool(self._path)
         self.note_input.setEnabled(enabled)
+        self.add_button.setEnabled(enabled)
+        self.clipboard_button.setEnabled(enabled)
         self._update_action_buttons()
 
     def _update_action_buttons(self):
         """Enable completed-note actions only when they can do something."""
-        enabled = bool(self._path) and any(
+        has_notes = bool(self._path) and bool(self._data["notes"])
+        has_done = bool(self._path) and any(
             note.get("done", False)
             for note in self._data["notes"]
         )
-        self.copy_done_button.setEnabled(
-            enabled
+        self.copy_done_button.setEnabled(has_done)
+        self.copy_all_button.setEnabled(has_notes)
+        self.archive_done_button.setEnabled(has_done)
+
+    def _set_add_notes_expanded(self, expanded):
+        """Show or collapse the note-entry controls."""
+        self.add_notes_widget.setVisible(expanded)
+        self.add_notes_toggle.setArrowType(
+            QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow
         )
-        self.archive_done_button.setEnabled(enabled)
+
+        if expanded:
+            self.note_input.setFocus()
 
     def _save(self):
         """Persist the current folder's notes."""
@@ -292,15 +361,30 @@ class ShotNotesWidget(QtWidgets.QWidget):
             nuke.message("Save the Nuke script before adding Shot Notes.")
             return
 
-        texts = [
-            line.strip()
-            for line in self.note_input.toPlainText().splitlines()
-            if line.strip()
-        ]
+        texts = _parse_note_text(self.note_input.toPlainText())
 
         if not texts:
             return
 
+        self._append_notes(texts)
+        self.note_input.clear()
+        self.note_input.setFocus()
+
+    def _add_notes_from_clipboard(self):
+        """Create checklist items from the current clipboard text."""
+        if not self._path:
+            nuke.message("Save the Nuke script before adding Shot Notes.")
+            return
+
+        texts = _parse_note_text(
+            QtWidgets.QApplication.clipboard().text()
+        )
+
+        if texts:
+            self._append_notes(texts)
+
+    def _append_notes(self, texts):
+        """Append note strings and persist them."""
         for text in texts:
             self._data["notes"].append({
                 "id": uuid.uuid4().hex,
@@ -308,10 +392,8 @@ class ShotNotesWidget(QtWidgets.QWidget):
                 "done": False,
             })
 
-        self.note_input.clear()
         self._save()
         self._refresh()
-        self.note_input.setFocus()
 
     def _note_state_changed(self):
         """Copy checkbox states back into the stored data."""
@@ -351,6 +433,34 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
         QtWidgets.QApplication.clipboard().setText(
             "\n".join("- {}".format(text) for text in texts)
+        )
+
+    def _copy_all(self):
+        """Copy all notes in separate completed and remaining sections."""
+        done = self._done_texts()
+        remaining = [
+            note["text"]
+            for note in self._data["notes"]
+            if not note.get("done", False)
+        ]
+
+        def section(title, texts):
+            lines = [title]
+            lines.extend(
+                "- {}".format(text)
+                for text in texts
+            )
+
+            if not texts:
+                lines.append("- None")
+
+            return "\n".join(lines)
+
+        QtWidgets.QApplication.clipboard().setText(
+            "{}\n\n{}".format(
+                section("DONE", done),
+                section("LEFT TO DO", remaining)
+            )
         )
 
     def _archive_done(self):
