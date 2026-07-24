@@ -442,8 +442,77 @@ def _placement_is_clear(rectangle, ignored_nodes):
     return True
 
 
-def _read_dot_upward_shift(source, dot, target_x, target_y):
-    """Return an upward shift that clears both the Read and new Dot."""
+def _read_dot_placement(
+    source,
+    dot,
+    target_x,
+    default_target_y,
+    outgoing_connections
+):
+    """Return a Dot y-position and Read shift that preserve graph order."""
+    downstream_nodes = {
+        dependent
+        for dependent, _input_index in outgoing_connections
+        if (
+            dependent.Class() not in {"Viewer", "PostageStamp"}
+            and dependent.ypos() > source.ypos()
+        )
+    }
+
+    if downstream_nodes:
+        nearest_downstream = min(
+            downstream_nodes,
+            key=lambda node: node.ypos()
+        )
+        target_y = min(
+            default_target_y,
+            nearest_downstream.ypos()
+            - dot.screenHeight()
+            - READ_DOT_COLLISION_PADDING
+        )
+        ignored_nodes = {source, dot}
+        source_bottom = source.ypos() + source.screenHeight()
+
+        for extra_shift in range(
+            0,
+            READ_DOT_MAX_UPWARD_SHIFT + READ_DOT_COLLISION_PADDING,
+            READ_DOT_COLLISION_PADDING
+        ):
+            candidate_y = target_y - extra_shift
+            source_shift = max(
+                0,
+                source_bottom
+                + READ_DOT_COLLISION_PADDING
+                - candidate_y
+            )
+            dot_rectangle = (
+                target_x,
+                candidate_y,
+                dot.screenWidth(),
+                dot.screenHeight(),
+            )
+            shifted_source_rectangle = (
+                source.xpos(),
+                source.ypos() - source_shift,
+                source.screenWidth(),
+                source.screenHeight(),
+            )
+
+            if (
+                _placement_is_clear(dot_rectangle, ignored_nodes)
+                and _placement_is_clear(
+                    shifted_source_rectangle,
+                    ignored_nodes
+                )
+            ):
+                return candidate_y, source_shift
+
+        return target_y, max(
+            0,
+            source_bottom + READ_DOT_COLLISION_PADDING - target_y
+        )
+
+    target_y = default_target_y
     dot_rectangle = (
         target_x,
         target_y,
@@ -453,7 +522,7 @@ def _read_dot_upward_shift(source, dot, target_x, target_y):
     ignored_nodes = {source, dot}
 
     if _placement_is_clear(dot_rectangle, ignored_nodes):
-        return 0
+        return target_y, 0
 
     for shift in range(
         READ_DOT_COLLISION_PADDING,
@@ -477,9 +546,9 @@ def _read_dot_upward_shift(source, dot, target_x, target_y):
             _placement_is_clear(shifted_dot_rectangle, ignored_nodes)
             and _placement_is_clear(shifted_source_rectangle, ignored_nodes)
         ):
-            return shift
+            return target_y - shift, shift
 
-    return 0
+    return target_y, 0
 
 
 def _nearby_from_dot(read_node):
@@ -875,19 +944,19 @@ def _create_named_read_dot(source):
     target_x = source.xpos() + int(
         (source.screenWidth() - dot.screenWidth()) / 2
     )
-    target_y = source.ypos() + source_height + int(
+    default_target_y = source.ypos() + source_height + int(
         source_height * 1.25
     )
-    upward_shift = _read_dot_upward_shift(
+    target_y, upward_shift = _read_dot_placement(
         source,
         dot,
         target_x,
-        target_y
+        default_target_y,
+        outgoing_connections
     )
 
     if upward_shift:
         source.setYpos(source.ypos() - upward_shift)
-        target_y -= upward_shift
 
     rewired_connections = []
 
