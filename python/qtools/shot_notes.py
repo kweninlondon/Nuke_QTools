@@ -184,9 +184,21 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
         layout.addWidget(self.location_label)
 
+        self.single_note_input = QtWidgets.QLineEdit()
+        self.single_note_input.setPlaceholderText(
+            "Add a note and press Enter…"
+        )
+        self.single_note_input.setToolTip(
+            "Type one note and press Enter to add it immediately."
+        )
+        self.single_note_input.returnPressed.connect(
+            self._add_single_note
+        )
+        layout.addWidget(self.single_note_input)
+
         add_notes_header = QtWidgets.QHBoxLayout()
         self.add_notes_toggle = QtWidgets.QToolButton()
-        self.add_notes_toggle.setText("ADD NOTES")
+        self.add_notes_toggle.setText("MULTILINE EDITOR")
         self.add_notes_toggle.setCheckable(True)
         self.add_notes_toggle.setChecked(False)
         self.add_notes_toggle.setArrowType(QtCore.Qt.RightArrow)
@@ -194,7 +206,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
             QtCore.Qt.ToolButtonTextBesideIcon
         )
         self.add_notes_toggle.setToolTip(
-            "Show or hide the controls for adding notes."
+            "Show or hide the editor for adding several notes at once."
         )
         add_notes_header.addWidget(self.add_notes_toggle)
         add_notes_header.addStretch()
@@ -343,6 +355,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
             folder if folder else "Save the Nuke script to enable Shot Notes."
         )
         enabled = bool(self._path)
+        self.single_note_input.setEnabled(enabled)
         self.note_input.setEnabled(enabled)
         self.add_button.setEnabled(enabled)
         self.clipboard_button.setEnabled(enabled)
@@ -379,6 +392,21 @@ class ShotNotesWidget(QtWidgets.QWidget):
     def _save(self):
         """Persist the current folder's notes."""
         _save_data(self._path, self._data)
+
+    def _add_single_note(self):
+        """Add the always-visible single-line note when Enter is pressed."""
+        if not self._path:
+            nuke.message("Save the Nuke script before adding Shot Notes.")
+            return
+
+        texts = _parse_note_text(self.single_note_input.text())
+
+        if not texts:
+            return
+
+        self._append_notes(texts)
+        self.single_note_input.clear()
+        self.single_note_input.setFocus()
 
     def _add_notes(self):
         """Turn every non-empty input line into a checklist item."""
@@ -555,7 +583,7 @@ def _activate_panel_widget(widget):
         child = parent
         parent = child.parentWidget()
 
-    widget.setFocus()
+    widget.single_note_input.setFocus()
 
 
 def _activate_properties_tab():
