@@ -27,6 +27,9 @@
 #
 # DOTS OR POSTAGESTAMPS SELECTED
 # -----------------------------
+# If two or more labelled source Dots are selected:
+#   - Creates one PostageStamp for each selected Dot
+#
 # If every selected node is either a Dot or PostageStamp:
 #   - Opens the same Viewer / labelled-Dot menu
 #   - Connects every selected node to the chosen source
@@ -191,6 +194,24 @@ def _node_display_text(node):
     return node.name()
 
 
+def _fix_source_dot_label_if_enabled(source):
+    """Normalize a labelled source Dot to "From ..." when enabled."""
+    if (
+        source is None
+        or source.Class() != "Dot"
+        or "label" not in source.knobs()
+        or not _setting_bool(SETTING_FIX_DOT_NAME, True)
+    ):
+        return
+
+    current_label = _clean_text(source["label"].value())
+
+    if current_label and not current_label.lower().startswith("from "):
+        source["label"].setValue(
+            _from_label(_node_display_text(source))
+        )
+
+
 def _connection_label(source):
     """Build the final label for a target node."""
     return "To {}".format(_node_display_text(source))
@@ -265,6 +286,32 @@ def _all_selected_are_retargetable(selected_nodes):
         node.Class() in SUPPORTED_TARGET_CLASSES
         for node in selected_nodes
     )
+
+
+def _all_selected_are_labelled_source_dots(selected_nodes):
+    """
+    Return True when two or more selected nodes are connected source Dots.
+
+    Disconnected Dots and Dots labelled "To ..." remain connector targets,
+    preserving the existing multi-retarget workflow.
+    """
+    if len(selected_nodes) < 2:
+        return False
+
+    for node in selected_nodes:
+        if node.Class() != "Dot" or "label" not in node.knobs():
+            return False
+
+        label = _clean_text(node["label"].value())
+
+        if (
+            not label
+            or label.lower().startswith("to ")
+            or _node_has_no_input(node)
+        ):
+            return False
+
+    return True
 
 
 def _active_viewer_source():
@@ -625,6 +672,7 @@ def _create_postage_stamp(source, target_position=None, frame_new=True):
         nuke.message("No valid source node was found.")
         return None
 
+    _fix_source_dot_label_if_enabled(source)
     _deselect_all()
 
     stamp = nuke.createNode(
@@ -671,6 +719,40 @@ def _create_postage_stamp(source, target_position=None, frame_new=True):
         nuke.zoomToFitSelected()
 
     return stamp
+
+
+def _create_postage_stamps(sources):
+    """Create and select one PostageStamp for each source node."""
+    created_stamps = []
+
+    for source in sorted(
+        sources,
+        key=lambda node: (node.ypos(), node.xpos(), node.name().lower())
+    ):
+        stamp = _create_postage_stamp(source, frame_new=False)
+
+        if stamp is not None:
+            created_stamps.append(stamp)
+
+    if not created_stamps:
+        return []
+
+    # Native creation starts each node at the same graph position. Arrange
+    # the results in a row so every new connector remains visible.
+    target_x = created_stamps[0].xpos()
+    target_y = created_stamps[0].ypos()
+
+    for stamp in created_stamps:
+        stamp.setXYpos(target_x, target_y)
+        target_x += stamp.screenWidth() + 20
+
+    _deselect_all()
+
+    for stamp in created_stamps:
+        stamp.setSelected(True)
+
+    nuke.zoomToFitSelected()
+    return created_stamps
 
 
 def _disconnected_targets_matching_source(source, excluded_nodes=None):
@@ -800,6 +882,7 @@ def _retarget_nodes(targets, source):
         nuke.message("No valid source node was found.")
         return 0
 
+    _fix_source_dot_label_if_enabled(source)
     successful_targets = []
     failed_targets = []
 
@@ -1403,20 +1486,6 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         undo.begin("Postage Stamp Connector")
 
         try:
-            if (
-                self.fix_dot_name_checkbox.isChecked()
-                and source.Class() == "Dot"
-                and "label" in source.knobs()
-            ):
-                current_label = _clean_text(source["label"].value())
-
-                if current_label and not current_label.lower().startswith(
-                    "from "
-                ):
-                    source["label"].setValue(
-                        _from_label(_node_display_text(source))
-                    )
-
             self.accept()
 
             if self._on_source_selected is not None:
@@ -1836,6 +1905,15 @@ def create_or_retarget_postage_stamp():
             return reconnected
 
         return _create_postage_stamp(selected_nodes[0])
+
+    if _all_selected_are_labelled_source_dots(selected_nodes):
+        undo = nuke.Undo()
+        undo.begin("Create Postage Stamp Connectors")
+
+        try:
+            return _create_postage_stamps(selected_nodes)
+        finally:
+            undo.end()
 
     if _all_selected_are_retargetable(selected_nodes):
         return _choose_source(
