@@ -3,6 +3,7 @@
 import nuke
 
 from qtools import shot_notes
+from qtools import wired_copy
 
 
 qtools_menu = nuke.menu("Nuke").addMenu("QTools")
@@ -20,6 +21,26 @@ qtools_menu.addCommand(
     "from qtools import postage_stamp_creator; "
     "postage_stamp_creator.create_or_retarget_postage_stamp()",
     "Alt+Y",
+)
+
+wired_copy_menu = qtools_menu.addMenu("Wired Copy")
+
+wired_copy_menu.addCommand(
+    "Copy with Inputs",
+    "from qtools import wired_copy; wired_copy.copy_with_inputs()",
+    "Ctrl+Shift+C",
+)
+
+wired_copy_menu.addCommand(
+    "Paste with Inputs",
+    "from qtools import wired_copy; wired_copy.paste_with_inputs()",
+    "Ctrl+Shift+V",
+)
+
+wired_copy_menu.addCommand(
+    "Duplicate with Inputs",
+    "from qtools import wired_copy; wired_copy.duplicate_with_inputs()",
+    "Alt+Shift+B",
 )
 
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
