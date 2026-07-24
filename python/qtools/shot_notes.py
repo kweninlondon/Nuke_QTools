@@ -17,6 +17,10 @@ except ImportError:
 PANEL_ID = "com.qtools.ShotNotes"
 PANEL_TITLE = "Shot Notes"
 NOTES_FILENAME = ".qtools_shot_notes.json"
+WIDGET_EXPRESSION = (
+    "__import__('qtools.shot_notes', "
+    "fromlist=['ShotNotesWidget']).ShotNotesWidget"
+)
 _PANEL_REGISTERED = False
 
 
@@ -378,7 +382,7 @@ def register_panel():
         return
 
     nukescripts.panels.registerWidgetAsPanel(
-        "qtools.shot_notes.ShotNotesWidget",
+        WIDGET_EXPRESSION,
         PANEL_TITLE,
         PANEL_ID
     )
@@ -396,7 +400,7 @@ def show_shot_notes():
 
     pane = nuke.getPaneFor("Viewer.1")
     panel = nukescripts.panels.registerWidgetAsPanel(
-        "qtools.shot_notes.ShotNotesWidget",
+        WIDGET_EXPRESSION,
         PANEL_TITLE,
         PANEL_ID,
         True
