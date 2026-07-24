@@ -1852,15 +1852,24 @@ def create_or_retarget_postage_stamp():
         except Exception:
             source = selected_nodes[-1]
 
-        reconnected = _reconnect_matching_disconnected_targets(
-            source,
-            excluded_nodes=selected_nodes
-        )
+        undo = nuke.Undo()
+        undo.begin("Postage Stamp Connector")
 
-        if reconnected:
-            return reconnected
+        try:
+            reconnected = _reconnect_matching_disconnected_targets(
+                source,
+                excluded_nodes=selected_nodes
+            )
 
-        return _create_postage_stamp(source)
+            if reconnected:
+                return reconnected
+
+            return _create_from_chosen_source(
+                source,
+                frame_new=True
+            )
+        finally:
+            undo.end()
 
     return _choose_source(
         on_source_selected=_create_from_chosen_source
