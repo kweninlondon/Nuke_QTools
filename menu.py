@@ -40,7 +40,7 @@ wired_copy_menu.addCommand(
 wired_copy_menu.addCommand(
     "Duplicate with Inputs",
     "from qtools import wired_copy; wired_copy.duplicate_with_inputs()",
-    "Alt+Shift+B",
+    "Ctrl+Shift+D",
 )
 
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
