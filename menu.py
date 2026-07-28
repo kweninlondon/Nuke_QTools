@@ -43,6 +43,19 @@ wired_copy_menu.addCommand(
     "Ctrl+Shift+D",
 )
 
+utilities_menu = qtools_menu.addMenu("Utilities")
+
+utilities_menu.addCommand(
+    "Create Layer Shuffles",
+    "from qtools import layer_shuffles; "
+    "layer_shuffles.create_layer_shuffles()",
+)
+
+utilities_menu.addCommand(
+    "Copy Asset Report",
+    "from qtools import asset_report; asset_report.show_asset_report()",
+)
+
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
 
 script_cleanup_menu.addCommand(
