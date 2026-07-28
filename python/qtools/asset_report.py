@@ -231,6 +231,15 @@ def _build_plain_text_report(assets):
 
         lines.append("")
 
+    lines.extend([
+        "ALL PATHS",
+        "",
+        "\n".join(
+            directory
+            for directory, _grouped_assets in _group_assets(assets)
+        ),
+    ])
+
     return "\n".join(lines).rstrip()
 
 
@@ -255,6 +264,17 @@ def _build_markdown_report(assets):
                 "",
             ])
 
+    lines.extend([
+        "## All paths",
+        "",
+        "```text",
+    ])
+    lines.extend(
+        directory
+        for directory, _grouped_assets in _group_assets(assets)
+    )
+    lines.extend(["```", ""])
+
     return "\n".join(lines).rstrip()
 
 
@@ -264,8 +284,9 @@ def _build_html_report(assets):
         "<html><head><meta charset=\"utf-8\"></head>",
         '<body style="font-family: Arial, Helvetica, sans-serif; '
         'font-size: 11pt; color: #202124; line-height: 1.45;">',
-        '<h1 style="font-size: 20pt; margin: 0 0 20px 0;">'
-        "Nuke Asset Reads</h1>",
+        '<div style="font-size: 28pt !important; font-weight: 700; '
+        'line-height: 1.15; margin: 0 0 24px 0;">'
+        "Nuke Asset Reads</div>",
     ]
 
     if not assets:
@@ -277,8 +298,11 @@ def _build_html_report(assets):
     for directory, grouped_assets in _group_assets(assets):
         parts.extend([
             '<section style="margin: 0 0 26px 0;">',
-            '<h2 style="font-size: 14pt; margin: 0 0 10px 0;">'
-            '<span style="font-family: monospace;">{}</span></h2>'.format(
+            '<div style="font-size: 11pt !important; font-weight: 400; '
+            'margin: 0 0 12px 0;">'
+            '<strong>Path:</strong> '
+            '<code style="font-family: monospace; font-size: 10.5pt;">'
+            "{}</code></div>".format(
                 html.escape(directory)
             ),
         ])
@@ -286,10 +310,12 @@ def _build_html_report(assets):
         for asset in grouped_assets:
             parts.extend([
                 '<div style="margin: 0 0 14px 18px;">',
-                '<strong>{}</strong><br>'.format(
+                '<div style="font-size: 13pt !important; font-weight: 700; '
+                'line-height: 1.25; margin-bottom: 3px;">{}</div>'.format(
                     html.escape(asset["read_name"])
                 ),
-                '<span style="font-family: monospace;">{}</span>'
+                '<code style="font-family: monospace; font-size: 10.5pt;">'
+                "{}</code>"
                 ' <span style="color: #666;">({})</span>'.format(
                     html.escape(asset["asset_name"]),
                     html.escape(asset["read_type"]),
@@ -298,6 +324,20 @@ def _build_html_report(assets):
             ])
 
         parts.append("</section>")
+
+    all_paths = "\n".join(
+        directory
+        for directory, _grouped_assets in _group_assets(assets)
+    )
+    parts.extend([
+        '<div style="font-size: 18pt !important; font-weight: 700; '
+        'margin: 28px 0 10px 0;">All paths</div>',
+        '<pre style="display: block; white-space: pre-wrap; '
+        'font-family: monospace; font-size: 10.5pt; line-height: 1.45; '
+        'background: #f3f4f6; border: 1px solid #dfe1e5; '
+        'border-radius: 6px; padding: 14px; margin: 0;">'
+        "<code>{}</code></pre>".format(html.escape(all_paths)),
+    ])
 
     parts.append("</body></html>")
     return "".join(parts)
