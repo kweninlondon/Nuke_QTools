@@ -189,104 +189,124 @@ def _asset_data(node):
 
 
 def _group_assets(assets):
-    """Group assets by directory while preserving natural ordering."""
+    """Group nodes that reference the same complete file path."""
     groups = {}
 
     for asset in assets:
-        groups.setdefault(asset["asset_path"], []).append(asset)
+        groups.setdefault(asset["full_path"], []).append(asset)
 
-    return [
-        (
-            directory,
-            sorted(
-                grouped_assets,
-                key=lambda asset: _natural_sort_key(asset["read_name"])
-            ),
+    grouped_results = []
+
+    for grouped_assets in groups.values():
+        grouped_assets = sorted(
+            grouped_assets,
+            key=lambda asset: _natural_sort_key(asset["read_name"])
         )
-        for directory, grouped_assets in sorted(
-            groups.items(),
-            key=lambda item: _natural_sort_key(item[0])
-        )
-    ]
+        first_asset = grouped_assets[0]
+        read_types = sorted({
+            asset["read_type"]
+            for asset in grouped_assets
+        })
+        grouped_results.append({
+            "heading": first_asset["read_name"],
+            "read_names": [
+                asset["read_name"]
+                for asset in grouped_assets
+            ],
+            "asset_name": first_asset["asset_name"],
+            "asset_path": first_asset["asset_path"],
+            "full_path": first_asset["full_path"],
+            "read_type": ", ".join(read_types),
+        })
+
+    return sorted(
+        grouped_results,
+        key=lambda asset: _natural_sort_key(asset["heading"])
+    )
+
+
+def _all_paths(assets):
+    """Return each asset directory once in natural order."""
+    return sorted(
+        {
+            asset["asset_path"]
+            for asset in assets
+        },
+        key=_natural_sort_key
+    )
 
 
 def _build_plain_text_report(assets):
-    """Build a path-grouped plain-text report."""
-    lines = ["NUKE ASSET READS", ""]
+    """Build a plain-text report with one section per unique file."""
+    lines = ["NUKE ASSETS REPORT", ""]
 
     if not assets:
         return "\n".join(
             lines + ["No file-based read or import nodes were selected."]
         )
 
-    for directory, grouped_assets in _group_assets(assets):
-        lines.extend(["PATH: {}".format(directory), ""])
-
-        for asset in grouped_assets:
-            lines.extend([
-                "- {}".format(asset["read_name"]),
-                "  Asset: {}".format(asset["asset_name"]),
-                "  Type: {}".format(asset["read_type"]),
-            ])
-
-        lines.append("")
+    for asset in _group_assets(assets):
+        lines.extend([
+            asset["heading"],
+            "",
+            "Read name: {}".format(", ".join(asset["read_names"])),
+            "Asset name: {}".format(asset["asset_name"]),
+            "Asset path: {}".format(asset["asset_path"]),
+            "Read type: {}".format(asset["read_type"]),
+            "",
+        ])
 
     lines.extend([
         "ALL PATHS",
         "",
-        "\n".join(
-            directory
-            for directory, _grouped_assets in _group_assets(assets)
-        ),
+        "\n".join(_all_paths(assets)),
     ])
 
     return "\n".join(lines).rstrip()
 
 
 def _build_markdown_report(assets):
-    """Build a path-grouped Markdown report."""
-    lines = ["# Nuke Asset Reads", ""]
+    """Build a Markdown report with one section per unique file."""
+    lines = ["# Nuke Assets Report", ""]
 
     if not assets:
         return "\n".join(
             lines + ["_No file-based read or import nodes were selected._"]
         )
 
-    for directory, grouped_assets in _group_assets(assets):
-        lines.extend(["## `{}`".format(directory), ""])
-
-        for asset in grouped_assets:
-            lines.extend([
-                "### {}".format(asset["read_name"]),
-                "",
-                "- **Asset:** `{}`".format(asset["asset_name"]),
-                "- **Type:** {}".format(asset["read_type"]),
-                "",
-            ])
+    for asset in _group_assets(assets):
+        lines.extend([
+            "## {}".format(asset["heading"]),
+            "",
+            "- **Read name:** {}".format(
+                ", ".join(asset["read_names"])
+            ),
+            "- **Asset name:** {}".format(asset["asset_name"]),
+            "- **Asset path:** `{}`".format(asset["asset_path"]),
+            "- **Read type:** {}".format(asset["read_type"]),
+            "",
+        ])
 
     lines.extend([
         "## All paths",
         "",
         "```text",
     ])
-    lines.extend(
-        directory
-        for directory, _grouped_assets in _group_assets(assets)
-    )
+    lines.extend(_all_paths(assets))
     lines.extend(["```", ""])
 
     return "\n".join(lines).rstrip()
 
 
 def _build_html_report(assets):
-    """Build a path-grouped HTML report."""
+    """Build a clean HTML report with one section per unique file."""
     parts = [
         "<html><head><meta charset=\"utf-8\"></head>",
         '<body style="font-family: Arial, Helvetica, sans-serif; '
         'font-size: 11pt; color: #202124; line-height: 1.45;">',
-        '<div style="font-size: 28pt !important; font-weight: 700; '
-        'line-height: 1.15; margin: 0 0 24px 0;">'
-        "Nuke Asset Reads</div>",
+        '<h1 style="font-family: Arial, Helvetica, sans-serif; '
+        'font-size: 24pt; font-weight: 500; line-height: 1.2; '
+        'margin: 0 0 24px 0;">Nuke Assets Report</h1>',
     ]
 
     if not assets:
@@ -295,45 +315,43 @@ def _build_html_report(assets):
             "No file-based read or import nodes were selected.</p>"
         )
 
-    for directory, grouped_assets in _group_assets(assets):
+    for asset in _group_assets(assets):
+        read_names = html.escape(", ".join(asset["read_names"]))
+        asset_name = html.escape(asset["asset_name"])
+        asset_path = html.escape(asset["asset_path"])
+        read_type = html.escape(asset["read_type"])
+
         parts.extend([
             '<section style="margin: 0 0 26px 0;">',
-            '<div style="font-size: 11pt !important; font-weight: 400; '
-            'margin: 0 0 12px 0;">'
-            '<strong>Path:</strong> '
-            '<code style="font-family: monospace; font-size: 10.5pt;">'
-            "{}</code></div>".format(
-                html.escape(directory)
+            '<h2 style="font-family: Arial, Helvetica, sans-serif; '
+            'font-size: 16pt; font-weight: 500; line-height: 1.25; '
+            'margin: 0 0 9px 0;">{}</h2>'.format(
+                html.escape(asset["heading"])
             ),
+            '<ul style="margin: 0; padding-left: 24px;">',
+            '<li style="margin: 3px 0;"><strong>Read name:</strong> '
+            "{}</li>".format(read_names),
+            '<li style="margin: 3px 0;"><strong>Asset name:</strong> '
+            "{}</li>".format(asset_name),
+            '<li style="margin: 3px 0;"><strong>Asset path:</strong> '
+            '<code style="font-family: Consolas, Monaco, monospace; '
+            'font-size: 10pt; background: #f5f5f5; border: 1px solid '
+            '#d8d8d8; border-radius: 3px; padding: 1px 4px;">'
+            "{}</code></li>".format(asset_path),
+            '<li style="margin: 3px 0;"><strong>Read type:</strong> '
+            "{}</li>".format(read_type),
+            "</ul>",
+            "</section>",
         ])
 
-        for asset in grouped_assets:
-            parts.extend([
-                '<div style="margin: 0 0 14px 18px;">',
-                '<div style="font-size: 13pt !important; font-weight: 700; '
-                'line-height: 1.25; margin-bottom: 3px;">{}</div>'.format(
-                    html.escape(asset["read_name"])
-                ),
-                '<code style="font-family: monospace; font-size: 10.5pt;">'
-                "{}</code>"
-                ' <span style="color: #666;">({})</span>'.format(
-                    html.escape(asset["asset_name"]),
-                    html.escape(asset["read_type"]),
-                ),
-                "</div>",
-            ])
-
-        parts.append("</section>")
-
-    all_paths = "\n".join(
-        directory
-        for directory, _grouped_assets in _group_assets(assets)
-    )
+    all_paths = "\n".join(_all_paths(assets))
     parts.extend([
-        '<div style="font-size: 18pt !important; font-weight: 700; '
-        'margin: 28px 0 10px 0;">All paths</div>',
+        '<h2 style="font-family: Arial, Helvetica, sans-serif; '
+        'font-size: 16pt; font-weight: 500; margin: 28px 0 10px 0;">'
+        "All paths</h2>",
         '<pre style="display: block; white-space: pre-wrap; '
-        'font-family: monospace; font-size: 10.5pt; line-height: 1.45; '
+        'font-family: Consolas, Monaco, monospace; font-size: 10pt; '
+        'line-height: 1.45; '
         'background: #f3f4f6; border: 1px solid #dfe1e5; '
         'border-radius: 6px; padding: 14px; margin: 0;">'
         "<code>{}</code></pre>".format(html.escape(all_paths)),
