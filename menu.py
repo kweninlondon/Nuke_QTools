@@ -11,6 +11,13 @@ gizmos_menu.addCommand(
     "nuke.createNode('CGTOFILM')",
 )
 
+nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools")
+
+nodes_qtools_menu.addCommand(
+    "CG To Film",
+    "nuke.createNode('CGTOFILM')",
+)
+
 from qtools import shot_notes
 from qtools import wired_copy
 
