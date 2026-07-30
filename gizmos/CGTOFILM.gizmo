@@ -1,5 +1,4 @@
-#! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
-version 17.0 v1
+version 12.0 v1
 Group {
  name CG_TO_FILM
  tile_color 0x82a8ffff
@@ -101,6 +100,7 @@ Group {
  addUserKnob {20 endGroup_5 l endGroup n -1}
  addUserKnob {20 GrainsTab l Grains}
  addUserKnob {20 RGBGrp l RGB n 1}
+ RGBGrp 0
  addUserKnob {26 GrainSizeDiv l Size}
  addUserKnob {7 GrainRedSize l Red R 0 100}
  GrainRedSize 0.1
@@ -135,6 +135,7 @@ Group {
  addUserKnob {26 ""}
  addUserKnob {20 endGroup_6 l endGroup n -1}
  addUserKnob {20 MonochromaticGrp l Monochromatic n 1}
+ MonochromaticGrp 0
  addUserKnob {4 MonoMode l Mode +INVISIBLE M {Overlay Mix "" "" "" "" ""}}
  addUserKnob {7 MonoSize l Size R 0 100}
  MonoSize 1.5
@@ -154,8 +155,12 @@ Group {
  addUserKnob {7 MonoGamma l Gamma R 0 5}
  MonoGamma 0.85
  addUserKnob {20 endGroup_7 l endGroup n -1}
+ addUserKnob {20 simple_grain_group l Simple n 1}
+ addUserKnob {7 simple_grain_mix l Mix}
+ simple_grain_mix 1
+ addUserKnob {20 endGroup_9 n -1}
  addUserKnob {20 info l Info}
- addUserKnob {26 version l version: T "1.0.4\n- Fixed dir blur artifact\n- Removed Obsolete LUT\n- General overall tidy up\n1.0.2\n- added mask input"}
+ addUserKnob {26 version l version: T "1.0.5\n- Modify header to allow usage in older Nuke versions\n- Added Simple grain mix slider\n- Tidy up grain a bit\n1.0.4\n- Fixed dir blur artifact\n- Removed Obsolete LUT\n- General overall tidy up\n1.0.2\n- added mask input"}
  addUserKnob {26 author -STARTLINE +INVISIBLE T "Quentin Vien"}
 }
  BackdropNode {
@@ -177,8 +182,8 @@ Group {
   note_font_size 42
   xpos 1618
   ypos 548
-  bdwidth 330
-  bdheight 140
+  bdwidth 334
+  bdheight 319
  }
  BackdropNode {
   inputs 0
@@ -208,10 +213,10 @@ Group {
   tile_color 0x388e8e00
   label "Grain Photo\n"
   note_font_size 42
-  xpos 270
+  xpos 254
   ypos 513
-  bdwidth 480
-  bdheight 343
+  bdwidth 501
+  bdheight 424
  }
  BackdropNode {
   inputs 0
@@ -219,10 +224,10 @@ Group {
   tile_color 0x388e8e00
   label "Grain Film"
   note_font_size 42
-  xpos 1055
-  ypos 523
-  bdwidth 245
-  bdheight 349
+  xpos 1011
+  ypos 517
+  bdwidth 419
+  bdheight 353
  }
  BackdropNode {
   inputs 0
@@ -344,7 +349,7 @@ Group {
   ypos -706
   disable {{1-Crop}}
  }
-set Nbdaf1900 [stack 0]
+set Nc9efbe00 [stack 0]
  Dot {
   name Dot22
   xpos 742
@@ -366,8 +371,8 @@ set Nbdaf1900 [stack 0]
   addUserKnob {6 mask_has_input l Has_input +STARTLINE}
   mask_has_input {{"1-\[exists input1]"}}
  }
-set Nbb54ed00 [stack 0]
-push $Nbb54ed00
+set Nac406d80 [stack 0]
+push $Nac406d80
  Noise {
   inputs 0
   size 20
@@ -450,7 +455,7 @@ push $Nbb54ed00
   xpos 421
   ypos -779
  }
-set Nbb592300 [stack 0]
+set Nac407680 [stack 0]
  Dot {
   name Dot16
   xpos 185
@@ -461,8 +466,8 @@ set Nbb592300 [stack 0]
   xpos 185
   ypos -534
  }
-push $Nbdaf1900
-push $Nbb592300
+push $Nc9efbe00
+push $Nac407680
  Grade {
   inputs 1+1
   multiply 0.51
@@ -526,7 +531,7 @@ push $Nbb592300
   xpos 421
   ypos -430
  }
-set Nbb5b5e00 [stack 0]
+set Nac408400 [stack 0]
  Shuffle2 {
   fromInput1 {
    {0}
@@ -550,7 +555,7 @@ set Nbb5b5e00 [stack 0]
   ypos -375
   disable {{1-parent.ChromaSwitch}}
  }
-push $Nbb5b5e00
+push $Nac408400
  Shuffle2 {
   fromInput1 {
    {0}
@@ -579,7 +584,7 @@ push $Nbb5b5e00
   ypos -308
   disable {{1-Crop}}
  }
-push $Nbb5b5e00
+push $Nac408400
  Dot {
   name Dot32
   xpos 211
@@ -602,13 +607,13 @@ push $Nbb5b5e00
   xpos 422
   ypos -200
  }
-set Nbb5dcf00 [stack 0]
+set Nac409180 [stack 0]
  Dot {
   name Dot23
   xpos 422
   ypos -158
  }
-set Nbb5dd400 [stack 0]
+set Nac409600 [stack 0]
  Shuffle2 {
   fromInput1 {
    {0}
@@ -623,7 +628,7 @@ set Nbb5dd400 [stack 0]
   xpos 161
   ypos -161
  }
-set Nbb5dd900 [stack 0]
+set Nacba1900 [stack 0]
  Ramp {
   p0 {0 0}
   p1 {{input.format.r/2} 0}
@@ -632,7 +637,7 @@ set Nbb5dd900 [stack 0]
   xpos 115
   ypos -59
  }
-push $Nbb5dd900
+push $Nacba1900
  Ramp {
   p0 {{input.format.r} 0}
   p1 {{input.format.r/2} 0}
@@ -656,8 +661,8 @@ push $Nbb5dd900
   xpos 160
   ypos -3
  }
-push $Nbb5dd400
-push $Nbb5dd400
+push $Nac409600
+push $Nac409600
  Dot {
   name Dot24
   xpos 573
@@ -688,7 +693,7 @@ push $Nbb5dd400
   xpos 388
   ypos -3
  }
-push $Nbb5dcf00
+push $Nac409180
  Dot {
   name Dot25
   xpos 691
@@ -719,7 +724,7 @@ push $Nbb5dcf00
   ypos 131
   disable {{1-Crop}}
  }
-set Nbb5f2d00 [stack 0]
+set Nacc2aa00 [stack 0]
  Dot {
   name Dot21
   xpos 173
@@ -730,7 +735,7 @@ set Nbb5f2d00 [stack 0]
   xpos 173
   ypos 271
  }
-push $Nbb5f2d00
+push $Nacc2aa00
  Colorspace {
   colorspace_out Cineon
   name Colorspace1
@@ -771,7 +776,7 @@ push $Nbb5f2d00
   xpos 422
   ypos 358
  }
-set Nbb625e00 [stack 0]
+set Nacc37b00 [stack 0]
  Dot {
   name Dot17
   xpos 186
@@ -782,7 +787,7 @@ set Nbb625e00 [stack 0]
   xpos 186
   ypos 406
  }
-push $Nbb625e00
+push $Nacc37b00
  Blur {
   channels {rgba.red -rgba.green -rgba.blue none}
   size {{parent.RedShiftSize}}
@@ -805,19 +810,19 @@ push $Nbb625e00
   xpos 422
   ypos 491
  }
-set Nbb627700 [stack 0]
+set Nacc38880 [stack 0]
  Dot {
   name Dot3
   xpos 242
   ypos 491
  }
-set Nbb654000 [stack 0]
+set Nacc38d00 [stack 0]
  Dot {
   name Dot4
   xpos 252
   ypos 1099
  }
-push $Nbb627700
+push $Nacc38880
  Dot {
   name Dot10
   xpos 871
@@ -828,19 +833,35 @@ push $Nbb627700
   xpos 1160
   ypos 491
  }
-set Nbb655e00 [stack 0]
+set Nacc39a80 [stack 0]
  Dot {
   name Dot1
   xpos 1323
   ypos 491
  }
-set Nbb656300 [stack 0]
+set Naccbc000 [stack 0]
  Dot {
   name Dot2
   xpos 1862
   ypos 491
  }
-set Nbb656800 [stack 0]
+ Dot {
+  name Dot35
+  xpos 1862
+  ypos 641
+ }
+set Nadf77200 [stack 0]
+ Dot {
+  name Dot37
+  xpos 1924
+  ypos 641
+ }
+ Dot {
+  name Dot36
+  xpos 1924
+  ypos 812
+ }
+push $Nadf77200
  Shuffle2 {
   fromInput1 {
    {0}
@@ -852,8 +873,8 @@ set Nbb656800 [stack 0]
   }
   mappings "4 black -1 -1 rgba.red 0 0 black -1 -1 rgba.green 0 1 black -1 -1 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
   name Shuffle2
-  xpos 1695
-  ypos 514
+  xpos 1664
+  ypos 638
  }
  Noise {
   cliptype none
@@ -864,36 +885,44 @@ set Nbb656800 [stack 0]
   center {2284 2284}
   name Noise2
   xpos 1664
-  ypos 622
+  ypos 694
  }
-push $Nbb656800
+push $Nadf77200
  Grade {
   inputs 1+1
   gamma 0.7
   mix 0.725
   name Grade11
   xpos 1828
-  ypos 622
+  ypos 694
  }
  Grade {
   gamma 1.1
   name Grade12
   xpos 1828
-  ypos 646
+  ypos 718
+ }
+ Merge2 {
+  inputs 2
+  operation copy
+  mix {{1-parent.simple_grain_mix}}
+  name Merge6
+  xpos 1828
+  ypos 809
  }
  Dot {
   name Dot5
   xpos 1862
   ypos 1001
  }
-push $Nbb627700
+push $Nacc38880
  Shuffle {
   alpha white
   name Shuffle18
   xpos 388
   ypos 607
  }
-set Nbb670000 [stack 0]
+set Naccec500 [stack 0]
  Dot {
   name Dot18
   xpos 304
@@ -905,12 +934,12 @@ set Nbb670000 [stack 0]
   xpos 270
   ypos 660
  }
-set Nbb670a00 [stack 0]
+set Nacceca00 [stack 0]
  Grade {
   gamma {{parent.MonoGamma}}
   name Grade1
-  xpos 347
-  ypos 718
+  xpos 326
+  ypos 702
  }
  Constant {
   inputs 0
@@ -922,69 +951,72 @@ set Nbb670a00 [stack 0]
  Grain2 {
   name Grain2_10
   label "Kodak 5218"
-  xpos 637
-  ypos 689
+  ypos 617
   red_size {{parent.MonoSize*0.1}}
   green_size {{parent.MonoSize}}
   blue_size {{parent.MonoSize*2}}
-  green_i 0.86
-  blue_i 0.73
-  red_m 0.775
-  green_m 0.635
-  blue_m 1.74
-  black {0 0 0}
-  minimum {0 0 0}
  }
  Saturation {
   saturation 0
   name Saturation10
   xpos 637
-  ypos 727
+  ypos 653
  }
  Grade {
   multiply 1.62
   gamma 0.5
   name Grade27
   xpos 637
-  ypos 753
+  ypos 677
  }
-set Nbb69a300 [stack 0]
-push $Nbb670000
+set Nacd8a000 [stack 0]
+push $Naccec500
+ Dot {
+  name Dot6
+  xpos 496
+  ypos 727
+ }
+set Naccbfa80 [stack 0]
  Merge2 {
   inputs 2
   operation multiply
   mix {{parent.MonoHigh}}
   name Merge1
   xpos 637
-  ypos 853
+  ypos 796
  }
-push $Nbb69a300
-push $Nbb670000
+push $Nacd8a000
+push $Naccbfa80
  Merge2 {
   inputs 2
   operation plus
   mix {{parent.MonoShadow}}
   name Merge2
-  xpos 491
-  ypos 848
+  xpos 531
+  ypos 724
  }
  Merge2 {
   inputs 2+1
   maskChannelMask rgba.red
   name Merge3
-  xpos 491
-  ypos 885
+  xpos 531
+  ypos 796
  }
-push $Nbb670000
+ Dot {
+  name Dot34
+  xpos 565
+  ypos 869
+ }
+push $Naccbfa80
  Merge2 {
   inputs 2
   operation copy
   mix {{parent.MonoMix}}
   name Merge4
-  xpos 617
-  ypos 899
+  xpos 462
+  ypos 866
  }
-push $Nbb670a00
+push $Nacceca00
  Grade {
   multiply {{1-parent.MonoHigh}}
   add {{1-parent.MonoShadow}}
@@ -998,28 +1030,28 @@ push $Nbb670a00
   xpos 270
   ypos 762
  }
-push $Nbb670000
+push $Naccec500
  Blur {
   size {{(1-parent.MonoDetail)*100}}
   name Blur3
-  xpos 547
-  ypos 696
+  xpos 528
+  ypos 601
  }
  Saturation {
   saturation {{parent.MonoSaturation*10}}
   name Saturation9
-  xpos 547
-  ypos 766
+  xpos 528
+  ypos 651
  }
-push $Nbb69a300
+push $Nacd8a000
  Merge2 {
   inputs 2
   operation overlay
   name Merge23
-  xpos 629
-  ypos 799
+  xpos 528
+  ypos 677
  }
-push $Nbb670000
+push $Naccec500
  Merge2 {
   inputs 2+1
   operation overlay
@@ -1037,7 +1069,13 @@ push $Nbb670000
   xpos 388
   ypos 905
  }
-push $Nbb655e00
+push $Nacc39a80
+ Dot {
+  name Dot33
+  xpos 1160
+  ypos 594
+ }
+set Nadf76d80 [stack 0]
  Dot {
   name Dot13
   xpos 1087
@@ -1048,12 +1086,12 @@ push $Nbb655e00
   xpos 1087
   ypos 799
  }
-push $Nbb656300
+push $Naccbc000
  Saturation {
   saturation 0
   name Saturation1
   xpos 1289
-  ypos 534
+  ypos 557
  }
  Grade {
   blackpoint {{parent.GrainShadow-1}}
@@ -1061,19 +1099,19 @@ push $Nbb656300
   gamma {{parent.GrainGamma}}
   name Grade2
   xpos 1289
-  ypos 560
+  ypos 583
  }
  Clamp {
   name Clamp1
   xpos 1289
-  ypos 597
+  ypos 620
  }
  Invert {
   name Invert1
   xpos 1289
-  ypos 635
+  ypos 658
  }
-push $Nbb655e00
+push $Nadf76d80
  Copy {
   inputs 2
   from0 rgba.red
@@ -1085,8 +1123,6 @@ push $Nbb655e00
  Grain2 {
   name Grain2_1
   label "Kodak 5218"
-  xpos 1126
-  ypos 798
   red_size {{parent.GrainRedSize}}
   green_size {{parent.GrainGreenSize}}
   blue_size {{parent.GrainBlueSize}}
@@ -1096,8 +1132,6 @@ push $Nbb655e00
   red_m {{parent.GrainRedIntensity*GrainIntensity}}
   green_m {{parent.GrainGreenIntensity*GrainIntensity}}
   blue_m {{parent.GrainBlueIntensity*GrainIntensity}}
-  black {0 0 0}
-  minimum {0 0 0}
  }
  Copy {
   inputs 2
@@ -1114,7 +1148,7 @@ push $Nbb655e00
   xpos 388
   ypos 998
  }
-push $Nbb654000
+push $Nacc38d00
  Dot {
   name Dot8
   xpos 189
