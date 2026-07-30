@@ -11,21 +11,11 @@ gizmos_menu.addCommand(
     "nuke.createNode('CGTOFILM')",
 )
 
-gizmos_menu.addCommand(
-    "Focus Peaking",
-    "nuke.createNode('FocusPeaking')",
-)
-
 nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools")
 
 nodes_qtools_menu.addCommand(
     "CG To Film",
     "nuke.createNode('CGTOFILM')",
-)
-
-nodes_qtools_menu.addCommand(
-    "Focus Peaking",
-    "nuke.createNode('FocusPeaking')",
 )
 
 from qtools import shot_notes
