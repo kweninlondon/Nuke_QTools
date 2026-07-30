@@ -1,0 +1,92 @@
+version 12.0 v1
+Gizmo {
+ name FocusPeaking
+ tile_color 0xffef00ff
+ label "Focus Peaking"
+ addUserKnob {20 User l "Focus Peaking"}
+ addUserKnob {7 noise_reduction l "Noise Reduction" R 0 5}
+ noise_reduction 0.5
+ addUserKnob {7 detail_size l "Detail Size" R 0.1 20}
+ detail_size 1.5
+ addUserKnob {7 sensitivity l Sensitivity R 0.1 20}
+ sensitivity 5
+ addUserKnob {7 threshold l Threshold R 0 1}
+ threshold 0.05
+ addUserKnob {7 softness l Softness R 0.001 0.5}
+ softness 0.05
+ addUserKnob {18 peaking_color l "Peaking Color"}
+ peaking_color {1 0 0}
+ addUserKnob {7 overlay_mix l "Overlay Mix"}
+ overlay_mix 1
+ addUserKnob {26 info l "" +STARTLINE T "Highlights high-frequency contrast as an aid to judging focus. Grain, texture, sharpening and compression may also produce a response."}
+}
+ Input {
+  inputs 0
+  name Input1
+  xpos 100
+  ypos 50
+ }
+set N_original [stack 0]
+ Blur {
+  channels rgb
+  size {{parent.noise_reduction}}
+  name NoiseReduction
+  xpos 100
+  ypos 100
+ }
+ Saturation {
+  channels rgb
+  saturation 0
+  name Luminance
+  xpos 100
+  ypos 145
+ }
+ Laplacian {
+  channels rgb
+  size {{parent.detail_size}}
+  name EdgeDetection
+  xpos 100
+  ypos 190
+ }
+ Expression {
+  channel0 rgb
+  expr0 abs(r)
+  expr1 abs(g)
+  expr2 abs(b)
+  name AbsoluteEdgeResponse
+  xpos 100
+  ypos 235
+ }
+ Grade {
+  channels rgb
+  multiply {{parent.sensitivity}}
+  blackpoint {{parent.threshold}}
+  whitepoint {{parent.threshold+parent.softness}}
+  black_clamp true
+  white_clamp true
+  name SoftThreshold
+  xpos 100
+  ypos 280
+ }
+ Grade {
+  channels rgb
+  multiply {{parent.peaking_color.r} {parent.peaking_color.g} {parent.peaking_color.b} 1}
+  name PeakingColor
+  xpos 100
+  ypos 325
+ }
+push $N_original
+ Merge2 {
+  inputs 2
+  operation screen
+  mix {{parent.overlay_mix}}
+  name PeakingOverlay
+  xpos 100
+  ypos 380
+ }
+ Output {
+  name Output1
+  xpos 100
+  ypos 425
+ }
+end_group
