@@ -22,6 +22,21 @@ ln -s ~/.nuke/QTools/setup/nuke_init.py ~/.nuke/init.py
 Restart Nuke after changing startup files. A **QTools** menu will appear in the
 main Nuke menu bar.
 
+## Install CG To Film
+
+The gizmo is included as `gizmos/CGTOFILM.gizmo`; no separate installation is
+needed when QTools is installed. Restart Nuke, then use **QTools > Gizmos >
+CG To Film**, or press Tab and type `CGTOFILM`.
+
+Keep the installed filename unversioned. Names such as
+`CGTOFILM1.0.4.gizmo` make Nuke derive an unreliable command name, and old
+menu entries that call `CGTOFILM1.0` will show **Unknown Command**. Replace
+those calls with:
+
+```python
+nuke.createNode("CGTOFILM")
+```
+
 ## Everyday Git workflow
 
 1. Edit and test a tool.

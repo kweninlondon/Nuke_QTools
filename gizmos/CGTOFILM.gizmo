@@ -1,0 +1,1170 @@
+#! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
+version 17.0 v1
+Group {
+ name CG_TO_FILM
+ tile_color 0x82a8ffff
+ addUserKnob {20 User l General}
+ addUserKnob {4 output l View M {Image Checkboard}}
+ addUserKnob {26 SanityCheckDiv l "Sanity Check"}
+ addUserKnob {6 Crop t "Crop input and out put to nuke format - recommended " +STARTLINE}
+ Crop true
+ addUserKnob {6 blackOutside l "black outside" -STARTLINE}
+ blackOutside true
+ addUserKnob {6 AlphaSwitch l "Full Apha" -STARTLINE}
+ AlphaSwitch true
+ addUserKnob {6 clamp_black l "Clamp blacks" -STARTLINE}
+ clamp_black true
+ addUserKnob {26 LookDiv l Looks}
+ addUserKnob {6 SoftGlowSwith l "Soft Glow" +STARTLINE}
+ SoftGlowSwith true
+ addUserKnob {6 GlowSwitch l Glow -STARTLINE}
+ GlowSwitch true
+ addUserKnob {6 GlintSwitch l Glint -STARTLINE}
+ GlintSwitch true
+ addUserKnob {6 RedShiftSwitch l "Red Shift" -STARTLINE}
+ RedShiftSwitch true
+ addUserKnob {6 SharpenSwitch l Sharpen +STARTLINE}
+ SharpenSwitch true
+ addUserKnob {4 SharpenColorSpace l "Color Space" -STARTLINE M {Linear Cineon ""}}
+ addUserKnob {26 _3 l Vignette}
+ addUserKnob {6 VignetteSwitch l Vignette +STARTLINE}
+ VignetteSwitch true
+ addUserKnob {6 ChromaSwitch l "Chromatic Aberation" -STARTLINE}
+ addUserKnob {6 EdgeBlurSwitch l "Edge lens blur" +STARTLINE}
+ EdgeBlurSwitch true
+ addUserKnob {26 GrainDiv l Grain}
+ addUserKnob {6 GrainSwitch l Grain +STARTLINE}
+ GrainSwitch true
+ addUserKnob {4 GrainType l Type -STARTLINE M {RGB Monochromatic Simple "" "" "" ""}}
+ GrainType Simple
+ addUserKnob {26 mask_line l "Use Mask"}
+ addUserKnob {6 mask_glows l Glows +STARTLINE}
+ addUserKnob {6 mask_redshift l RedShift -STARTLINE}
+ addUserKnob {6 mask_sharpen l Sharpen -STARTLINE}
+ addUserKnob {20 LooksTab l Looks}
+ addUserKnob {20 SoftGlowGrp l "Soft Glow" n 1}
+ addUserKnob {7 SoftGlowSize l Size R 0 250}
+ SoftGlowSize 61
+ addUserKnob {7 SoftGlowMix l Mix}
+ SoftGlowMix 0.435
+ addUserKnob {20 endGroup_2 l endGroup n -1}
+ addUserKnob {26 ""}
+ addUserKnob {20 GlowGrp l Glow n 1}
+ addUserKnob {7 GlowTolerance l Tolerance}
+ GlowTolerance 0.28
+ addUserKnob {7 GlowSaturation l Saturation}
+ GlowSaturation 0.57
+ addUserKnob {7 GlowSize l Size R 0 25}
+ GlowSize 7.5
+ addUserKnob {7 GlowMix l Mix}
+ GlowMix 0.295
+ addUserKnob {20 endGroup_1 l endGroup n -1}
+ addUserKnob {26 ""}
+ addUserKnob {20 GlintGrp l Glint n 1}
+ addUserKnob {7 GlintAngle l Angle t "Angle in degrees" R 0 360}
+ GlintAngle -45
+ addUserKnob {7 GlintMix l Mix}
+ GlintMix 0.16
+ addUserKnob {20 endGroup n -1}
+ addUserKnob {26 ""}
+ addUserKnob {20 RedShiftGrp l "Red Shift" n 1}
+ addUserKnob {7 RedShiftSize l Size R 0 10}
+ RedShiftSize 2.1
+ addUserKnob {7 RedShiftMix l Mix}
+ RedShiftMix 0.28
+ addUserKnob {20 endGroup_3 l endGroup n -1}
+ addUserKnob {26 ""}
+ addUserKnob {20 SharpenGrp l Sharpen n 1}
+ addUserKnob {7 SharpenSize l Size R 0 5}
+ SharpenSize 3
+ addUserKnob {7 SharpenMix l Mix}
+ SharpenMix 0.595
+ addUserKnob {20 endGroup_4 l endGroup n -1}
+ addUserKnob {20 vignette_tab l Vignette}
+ addUserKnob {68 output_selection l Output M {Result Vignette}}
+ addUserKnob {26 ""}
+ addUserKnob {7 chroma_scale l "Chromatic aberation"}
+ chroma_scale 0.75
+ addUserKnob {7 rot_blur l "Edge Lens blur"}
+ rot_blur 0.18
+ addUserKnob {26 ""}
+ addUserKnob {20 vignette_transform_grp l Vignette n 1}
+ addUserKnob {41 translate T TransformVignette.translate}
+ addUserKnob {41 rotate T TransformVignette.rotate}
+ addUserKnob {41 scale T TransformVignette.scale}
+ addUserKnob {20 endGroup_8 n -1}
+ addUserKnob {26 ""}
+ addUserKnob {7 VignetteSoftness l Softness R 0 100}
+ VignetteSoftness 100
+ addUserKnob {7 VignetteMix l Mix}
+ VignetteMix 0.5
+ addUserKnob {20 endGroup_5 l endGroup n -1}
+ addUserKnob {20 GrainsTab l Grains}
+ addUserKnob {20 RGBGrp l RGB n 1}
+ addUserKnob {26 GrainSizeDiv l Size}
+ addUserKnob {7 GrainRedSize l Red R 0 100}
+ GrainRedSize 0.1
+ addUserKnob {7 GrainGreenSize l Green R 0 100}
+ GrainGreenSize 1.6
+ addUserKnob {7 GrainBlueSize l Blue R 0 100}
+ GrainBlueSize 1.92
+ addUserKnob {26 _1 l Irregularity}
+ addUserKnob {7 GrainRedIrregularity l Red}
+ GrainRedIrregularity 0.6
+ addUserKnob {7 GrainGreenIrregularity l Green}
+ GrainGreenIrregularity 0.86
+ addUserKnob {7 GrainBlueIrregularity l Blue}
+ GrainBlueIrregularity 0.73
+ addUserKnob {26 _2 l Intensity}
+ addUserKnob {7 GrainRedIntensity l Red}
+ GrainRedIntensity 0.38
+ addUserKnob {7 GrainGreenIntensity l Green}
+ GrainGreenIntensity 0.17
+ addUserKnob {7 GrainBlueIntensity l Blue}
+ GrainBlueIntensity 0.87
+ addUserKnob {26 ""}
+ addUserKnob {7 GrainIntensity l Intensity R 0 4}
+ GrainIntensity 2
+ addUserKnob {26 ""}
+ addUserKnob {7 GrainHightlight l Hightlight R 0 4}
+ GrainHightlight 0.25
+ addUserKnob {7 GrainShadow l Shadow}
+ GrainShadow 1
+ addUserKnob {7 GrainGamma l Gamma R 0 5}
+ GrainGamma 1.16
+ addUserKnob {26 ""}
+ addUserKnob {20 endGroup_6 l endGroup n -1}
+ addUserKnob {20 MonochromaticGrp l Monochromatic n 1}
+ addUserKnob {4 MonoMode l Mode +INVISIBLE M {Overlay Mix "" "" "" "" ""}}
+ addUserKnob {7 MonoSize l Size R 0 100}
+ MonoSize 1.5
+ addUserKnob {7 MonoIrregularity l Irregularity}
+ addUserKnob {7 MonoSaturation l Saturation}
+ MonoSaturation 0.25
+ addUserKnob {7 MonoDetail l "Color Detail"}
+ MonoDetail 0.65
+ addUserKnob {26 ""}
+ addUserKnob {7 MonoMix l Mix}
+ MonoMix 0.1
+ addUserKnob {26 ""}
+ addUserKnob {7 MonoHigh l Highlitght}
+ MonoHigh 0.25
+ addUserKnob {7 MonoShadow l Shadow}
+ MonoShadow 1
+ addUserKnob {7 MonoGamma l Gamma R 0 5}
+ MonoGamma 0.85
+ addUserKnob {20 endGroup_7 l endGroup n -1}
+ addUserKnob {20 info l Info}
+ addUserKnob {26 version l version: T "1.0.4\n- Fixed dir blur artifact\n- Removed Obsolete LUT\n- General overall tidy up\n1.0.2\n- added mask input"}
+ addUserKnob {26 author -STARTLINE +INVISIBLE T "Quentin Vien"}
+}
+ BackdropNode {
+  inputs 0
+  name BackdropNode1
+  tile_color 0x71c67100
+  label "Edge Lens Blur"
+  note_font_size 42
+  xpos 105
+  ypos -241
+  bdwidth 633
+  bdheight 289
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode11
+  tile_color 0x7171c600
+  label "Simple Grain"
+  note_font_size 42
+  xpos 1618
+  ypos 548
+  bdwidth 330
+  bdheight 140
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode17
+  tile_color 0x8e388e00
+  label Glows
+  note_font_size 42
+  xpos 289
+  ypos -754
+  bdwidth 383
+  bdheight 203
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode18
+  tile_color 0x8e388e00
+  label Sharpen
+  note_font_size 42
+  xpos 107
+  ypos 81
+  bdwidth 630
+  bdheight 237
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode19
+  tile_color 0x388e8e00
+  label "Grain Photo\n"
+  note_font_size 42
+  xpos 270
+  ypos 513
+  bdwidth 480
+  bdheight 343
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode2
+  tile_color 0x388e8e00
+  label "Grain Film"
+  note_font_size 42
+  xpos 1055
+  ypos 523
+  bdwidth 245
+  bdheight 349
+ }
+ BackdropNode {
+  inputs 0
+  name BackdropNode3
+  tile_color 0x71c67100
+  label "Chromatic aberation"
+  note_font_size 42
+  xpos 105
+  ypos -485
+  bdwidth 634
+  bdheight 236
+ }
+ Constant {
+  inputs 0
+  channels rgb
+  format "2048 2048 0 0 2048 2048 1 square_2K"
+  name Constant1
+  xpos 708
+  ypos -975
+ }
+ RotoPaint {
+  curves {{{v x3f99999a}
+  {f 0}
+  {n
+   {layer Root
+    {f 2097152}
+    {t x44800000 x44800000}
+    {a pt1x 0 pt1y 0 pt2x 0 pt2y 0 pt3x 0 pt3y 0 pt4x 0 pt4y 0 ptex00 0 ptex01 0 ptex02 0 ptex03 0 ptex10 0 ptex11 0 ptex12 0 ptex13 0 ptex20 0 ptex21 0 ptex22 0 ptex23 0 ptex30 0 ptex31 0 ptex32 0 ptex33 0 ptof1x 0 ptof1y 0 ptof2x 0 ptof2y 0 ptof3x 0 ptof3y 0 ptof4x 0 ptof4y 0 pterr 0 ptrefset 0 ptmot x40800000 ptref 0}
+    {curvegroup Ellipse1 512 bezier
+     {{cc
+       {f 8192}
+       {px 1
+        {xc4085865 0}
+        {x44825002 x41bfffc2}
+        {x44085864 0}
+        {0 xc4085865}
+        {x44fdc002 x447cdffe}
+        {0 x44085864}
+        {x44085864 0}
+        {x44825002 x44f9dfff}
+        {xc4085865 0}
+        {0 x44085864}
+        {x425c0040 x447cdffe}
+        {0 xc4085865}}}
+      {cc
+       {f 8192}
+       {px 1
+        {xc4085865 0}
+        {0 0}
+        {x44085864 0}
+        {0 xc4085865}
+        {0 0}
+        {0 x44085864}
+        {x44085864 0}
+        {0 0}
+        {xc4085865 0}
+        {0 x44085864}
+        {0 0}
+        {0 xc4085865}}}}
+     {tx 1 x447aa000 x44857000}
+     {a osw x41200000 osf 0 str 1 spx x44800000 spy x44800000 sb 1 tt x40e00000}}}}}}
+  toolbox {selectAll {
+  { selectAll str 1 ssx 1 ssy 1 sf 1 }
+  { createBezier str 1 ssx 1 ssy 1 sf 1 sb 1 tt 4 }
+  { createBezierCusped str 1 ssx 1 ssy 1 sf 1 sb 1 tt 5 }
+  { createBSpline str 1 ssx 1 ssy 1 sf 1 sb 1 tt 6 }
+  { createEllipse str 1 ssx 1 ssy 1 sf 1 sb 1 tt 7 }
+  { createRectangle str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { createRectangleCusped str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { createOpenSpline str 1 ssx 1 ssy 1 sf 2 sb 1 }
+  { brush str 1 ssx 1 ssy 1 sf 1 sb 1 tt 17 }
+  { eraser src 2 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { clone src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { reveal src 3 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { dodge src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { burn src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { blur src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { sharpen src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+  { smear src 1 str 1 ssx 1 ssy 1 sf 1 sb 1 }
+} }
+  toolbar_brush_hardness 0.200000003
+  toolbar_source_transform_scale {1 1}
+  toolbar_source_transform_center {1024 1024}
+  colorOverlay {0 0 0 0}
+  lifetime_type "all frames"
+  motionblur_shutter_offset_type centred
+  source_black_outside true
+  name RotoPaint1
+  xpos 708
+  ypos -903
+ }
+ Reformat {
+  type "to box"
+  box_width {{parent.Crop1.box.r}}
+  box_height {{parent.Crop1.box.t}}
+  resize distort
+  name Reformat1
+  xpos 708
+  ypos -877
+ }
+ Transform {
+  scale {1 1}
+  center {{input.format.r/2} {input.format.t/2}}
+  name TransformVignette
+  xpos 708
+  ypos -853
+ }
+ Blur {
+  size {{parent.VignetteSoftness*10}}
+  name Blur2
+  xpos 708
+  ypos -738
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop false
+  name Crop3
+  xpos 708
+  ypos -706
+  disable {{1-Crop}}
+ }
+set Nbdaf1900 [stack 0]
+ Dot {
+  name Dot22
+  xpos 742
+  ypos 1516
+ }
+ Input {
+  inputs 0
+  name Mask
+  xpos 951
+  ypos -565
+  number 1
+ }
+ NoOp {
+  name HasInput
+  label "HAS INPUT"
+  xpos 951
+  ypos -541
+  addUserKnob {20 User}
+  addUserKnob {6 mask_has_input l Has_input +STARTLINE}
+  mask_has_input {{"1-\[exists input1]"}}
+ }
+set Nbb54ed00 [stack 0]
+push $Nbb54ed00
+ Noise {
+  inputs 0
+  size 20
+  gain 1
+  gamma 0.02
+  center {2048 1080}
+  name Noise1
+  xpos 1082
+  ypos -1188
+ }
+ CheckerBoard2 {
+  inputs 0
+  color1_panelDropped true
+  name CheckerBoard2
+  xpos 962
+  ypos -1278
+ }
+ CheckerBoard2 {
+  inputs 0
+  color1 {20 20 20 1}
+  color1_panelDropped true
+  name CheckerBoard1
+  xpos 859
+  ypos -1276
+ }
+ Merge2 {
+  inputs 2+1
+  operation copy
+  invert_mask true
+  name Merge5
+  xpos 859
+  ypos -1188
+ }
+ Reformat {
+  type "to box"
+  box_width {{parent.Crop1.box.r}}
+  box_height {{parent.Crop1.box.t}}
+  resize distort
+  name Reformat2
+  xpos 859
+  ypos -1136
+ }
+ Input {
+  inputs 0
+  name Input
+  xpos 387
+  ypos -1313
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop false
+  name Crop1
+  xpos 387
+  ypos -1168
+  disable {{1-Crop}}
+ }
+ Switch {
+  inputs 2
+  which {{output}}
+  name Switch7
+  xpos 387
+  ypos -1136
+ }
+ Clamp {
+  maximum 100
+  name Clamp_Blacks
+  xpos 387
+  ypos -1100
+  disable {{1-parent.clamp_black}}
+ }
+ Shuffle {
+  alpha white
+  name Shuffle17
+  xpos 387
+  ypos -812
+  disable {{1-AlphaSwitch}}
+ }
+ Dot {
+  name Dot15
+  xpos 421
+  ypos -779
+ }
+set Nbb592300 [stack 0]
+ Dot {
+  name Dot16
+  xpos 185
+  ypos -759
+ }
+ Dot {
+  name Dot14
+  xpos 185
+  ypos -534
+ }
+push $Nbdaf1900
+push $Nbb592300
+ Grade {
+  inputs 1+1
+  multiply 0.51
+  gamma 0.44
+  invert_mask true
+  mix {{parent.VignetteMix}}
+  name Grade5
+  xpos 387
+  ypos -706
+  disable {{1-VignetteSwitch}}
+ }
+ Glow2 {
+  tolerance {{parent.GlowTolerance}}
+  brightness 0.58
+  saturation {{parent.GlowSaturation}}
+  size {{parent.GlowSize}}
+  mix {{parent.GlowMix}}
+  name Glow
+  xpos 387
+  ypos -670
+  disable {{1-GlowSwitch}}
+ }
+ Glow2 {
+  brightness 0.14
+  size {{parent.SoftGlowSize}}
+  mix {{parent.SoftGlowMix}}
+  name SoftGlow
+  xpos 387
+  ypos -644
+  disable {{1-SoftGlowSwith}}
+ }
+ Glint {
+  length 48
+  oddlen 0.9
+  rotation {{parent.GlintAngle}}
+  steps 7
+  mix {{parent.GlintMix/10}}
+  name Glint
+  xpos 387
+  ypos -618
+  disable {{1-GlintSwitch}}
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop false
+  name Crop6
+  xpos 387
+  ypos -586
+  disable {{1-Crop}}
+ }
+ Merge2 {
+  inputs 2+1
+  operation copy
+  name Mask_Glow
+  xpos 387
+  ypos -537
+  disable {{HasInput.mask_has_input+(1-parent.mask_glows)}}
+ }
+ Dot {
+  name Dot144
+  xpos 421
+  ypos -430
+ }
+set Nbb5b5e00 [stack 0]
+ Shuffle2 {
+  fromInput1 {
+   {0}
+   B
+  }
+  fromInput2 {
+   {0}
+   B
+  }
+  mappings "4 rgba.red 0 0 rgba.red 0 0 black -1 -1 rgba.green 0 1 black -1 -1 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+  name Shuffle38
+  xpos 329
+  ypos -401
+ }
+ Transform {
+  scale {{1+(parent.chroma_scale/1000)}}
+  center {{input.format.r/2} {input.format.t/2}}
+  shutteroffset centred
+  name Transform20
+  xpos 329
+  ypos -375
+  disable {{1-parent.ChromaSwitch}}
+ }
+push $Nbb5b5e00
+ Shuffle2 {
+  fromInput1 {
+   {0}
+   B
+  }
+  fromInput2 {
+   {0}
+   B
+  }
+  mappings "4 black -1 -1 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 rgba.alpha 0 3 rgba.alpha 0 3"
+  name Shuffle39
+  xpos 440
+  ypos -399
+ }
+ Merge2 {
+  inputs 2
+  name Merge91
+  xpos 388
+  ypos -332
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop false
+  name Crop5
+  xpos 388
+  ypos -308
+  disable {{1-Crop}}
+ }
+push $Nbb5b5e00
+ Dot {
+  name Dot32
+  xpos 211
+  ypos -430
+ }
+ Dot {
+  name Dot31
+  xpos 211
+  ypos -272
+ }
+ Switch {
+  inputs 2
+  which {{parent.ChromaSwitch}}
+  name ByPass_CHROMATIC_ABERATION
+  xpos 388
+  ypos -275
+ }
+ Dot {
+  name Dot27
+  xpos 422
+  ypos -200
+ }
+set Nbb5dcf00 [stack 0]
+ Dot {
+  name Dot23
+  xpos 422
+  ypos -158
+ }
+set Nbb5dd400 [stack 0]
+ Shuffle2 {
+  fromInput1 {
+   {0}
+   B
+  }
+  fromInput2 {
+   {0}
+   B
+  }
+  mappings "4 black -1 -1 rgba.red 0 0 black -1 -1 rgba.green 0 1 black -1 -1 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+  name Shuffle1
+  xpos 161
+  ypos -161
+ }
+set Nbb5dd900 [stack 0]
+ Ramp {
+  p0 {0 0}
+  p1 {{input.format.r/2} 0}
+  type plinear
+  name Ramp1
+  xpos 115
+  ypos -59
+ }
+push $Nbb5dd900
+ Ramp {
+  p0 {{input.format.r} 0}
+  p1 {{input.format.r/2} 0}
+  type plinear
+  name Ramp2
+  xpos 205
+  ypos -60
+ }
+ Merge2 {
+  inputs 2
+  operation multiply
+  name Merge7
+  xpos 160
+  ypos -27
+ }
+ Grade {
+  channels rgba
+  gamma 0.2
+  mix {{1-parent.rot_blur}}
+  name Grade3
+  xpos 160
+  ypos -3
+ }
+push $Nbb5dd400
+push $Nbb5dd400
+ Dot {
+  name Dot24
+  xpos 573
+  ypos -158
+ }
+ Transform {
+  rotate {{parent.rot_blur/2}}
+  center {{input.format.r/2} {input.format.t/2}}
+  shutteroffset centred
+  name Transform1
+  xpos 539
+  ypos -131
+  disable {{1-parent.EdgeBlurSwitch}}
+ }
+ DirBlurWrapper {
+  BlurType radial
+  BlurCenter {{input.format.r/2} {input.format.t/2}}
+  BlurLength {{parent.rot_blur}}
+  name DirBlurWrapper3
+  xpos 539
+  ypos -56
+  disable {{1-parent.EdgeBlurSwitch}}
+ }
+ Merge2 {
+  inputs 2+1
+  operation copy
+  name Merge8
+  xpos 388
+  ypos -3
+ }
+push $Nbb5dcf00
+ Dot {
+  name Dot25
+  xpos 691
+  ypos -200
+ }
+ Dot {
+  name Dot26
+  xpos 691
+  ypos 24
+ }
+ Switch {
+  inputs 2
+  which {{parent.rot_blur==0?0:1}}
+  name ByPass_DIRBLUR
+  xpos 388
+  ypos 21
+ }
+ Dot {
+  name Dot28
+  xpos 422
+  ypos 59
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop false
+  name Crop4
+  xpos 388
+  ypos 131
+  disable {{1-Crop}}
+ }
+set Nbb5f2d00 [stack 0]
+ Dot {
+  name Dot21
+  xpos 173
+  ypos 134
+ }
+ Dot {
+  name Dot20
+  xpos 173
+  ypos 271
+ }
+push $Nbb5f2d00
+ Colorspace {
+  colorspace_out Cineon
+  name Colorspace1
+  xpos 388
+  ypos 161
+  disable {{1-SharpenColorSpace}}
+ }
+ Sharpen {
+  size {{parent.SharpenSize}}
+  mix {{parent.SharpenMix}}
+  name Sharpen5
+  xpos 388
+  ypos 208
+  disable {{1-SharpenSwitch x1 1}}
+ }
+ Colorspace {
+  colorspace_in Cineon
+  name Colorspace2
+  xpos 388
+  ypos 244
+  disable {{1-SharpenColorSpace x1084 0}}
+ }
+ Merge2 {
+  inputs 2
+  operation copy
+  name Mask_Sharpen
+  xpos 388
+  ypos 268
+  disable {{HasInput.mask_has_input+(1-parent.mask_sharpen)}}
+ }
+ Dot {
+  name Dot30
+  xpos 422
+  ypos 292
+ }
+ Dot {
+  name Dot29
+  xpos 422
+  ypos 358
+ }
+set Nbb625e00 [stack 0]
+ Dot {
+  name Dot17
+  xpos 186
+  ypos 358
+ }
+ Dot {
+  name Dot19
+  xpos 186
+  ypos 406
+ }
+push $Nbb625e00
+ Blur {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  size {{parent.RedShiftSize}}
+  mix {{parent.RedShiftMix}}
+  name Blur1
+  xpos 388
+  ypos 379
+  disable {{1-parent.RedShiftSwitch}}
+ }
+ Merge2 {
+  inputs 2+1
+  operation copy
+  name Mask_RedShift
+  xpos 388
+  ypos 403
+  disable {{HasInput.mask_has_input+(1-parent.mask_redshift)}}
+ }
+ Dot {
+  name Dot9
+  xpos 422
+  ypos 491
+ }
+set Nbb627700 [stack 0]
+ Dot {
+  name Dot3
+  xpos 242
+  ypos 491
+ }
+set Nbb654000 [stack 0]
+ Dot {
+  name Dot4
+  xpos 252
+  ypos 1099
+ }
+push $Nbb627700
+ Dot {
+  name Dot10
+  xpos 871
+  ypos 491
+ }
+ Dot {
+  name Dot11
+  xpos 1160
+  ypos 491
+ }
+set Nbb655e00 [stack 0]
+ Dot {
+  name Dot1
+  xpos 1323
+  ypos 491
+ }
+set Nbb656300 [stack 0]
+ Dot {
+  name Dot2
+  xpos 1862
+  ypos 491
+ }
+set Nbb656800 [stack 0]
+ Shuffle2 {
+  fromInput1 {
+   {0}
+   B
+  }
+  fromInput2 {
+   {0}
+   B
+  }
+  mappings "4 black -1 -1 rgba.red 0 0 black -1 -1 rgba.green 0 1 black -1 -1 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+  name Shuffle2
+  xpos 1695
+  ypos 514
+ }
+ Noise {
+  cliptype none
+  size 2
+  zoffset {{random(frame)*1000}}
+  gain 0.39
+  gamma 0.78
+  center {2284 2284}
+  name Noise2
+  xpos 1664
+  ypos 622
+ }
+push $Nbb656800
+ Grade {
+  inputs 1+1
+  gamma 0.7
+  mix 0.725
+  name Grade11
+  xpos 1828
+  ypos 622
+ }
+ Grade {
+  gamma 1.1
+  name Grade12
+  xpos 1828
+  ypos 646
+ }
+ Dot {
+  name Dot5
+  xpos 1862
+  ypos 1001
+ }
+push $Nbb627700
+ Shuffle {
+  alpha white
+  name Shuffle18
+  xpos 388
+  ypos 607
+ }
+set Nbb670000 [stack 0]
+ Dot {
+  name Dot18
+  xpos 304
+  ypos 611
+ }
+ Saturation {
+  saturation 0
+  name Saturation2
+  xpos 270
+  ypos 660
+ }
+set Nbb670a00 [stack 0]
+ Grade {
+  gamma {{parent.MonoGamma}}
+  name Grade1
+  xpos 347
+  ypos 718
+ }
+ Constant {
+  inputs 0
+  color {0.5 0.5 0.5 1}
+  name Constant9
+  xpos 637
+  ypos 545
+ }
+ Grain2 {
+  name Grain2_10
+  label "Kodak 5218"
+  xpos 637
+  ypos 689
+  red_size {{parent.MonoSize*0.1}}
+  green_size {{parent.MonoSize}}
+  blue_size {{parent.MonoSize*2}}
+  green_i 0.86
+  blue_i 0.73
+  red_m 0.775
+  green_m 0.635
+  blue_m 1.74
+  black {0 0 0}
+  minimum {0 0 0}
+ }
+ Saturation {
+  saturation 0
+  name Saturation10
+  xpos 637
+  ypos 727
+ }
+ Grade {
+  multiply 1.62
+  gamma 0.5
+  name Grade27
+  xpos 637
+  ypos 753
+ }
+set Nbb69a300 [stack 0]
+push $Nbb670000
+ Merge2 {
+  inputs 2
+  operation multiply
+  mix {{parent.MonoHigh}}
+  name Merge1
+  xpos 637
+  ypos 853
+ }
+push $Nbb69a300
+push $Nbb670000
+ Merge2 {
+  inputs 2
+  operation plus
+  mix {{parent.MonoShadow}}
+  name Merge2
+  xpos 491
+  ypos 848
+ }
+ Merge2 {
+  inputs 2+1
+  maskChannelMask rgba.red
+  name Merge3
+  xpos 491
+  ypos 885
+ }
+push $Nbb670000
+ Merge2 {
+  inputs 2
+  operation copy
+  mix {{parent.MonoMix}}
+  name Merge4
+  xpos 617
+  ypos 899
+ }
+push $Nbb670a00
+ Grade {
+  multiply {{1-parent.MonoHigh}}
+  add {{1-parent.MonoShadow}}
+  gamma {{parent.MonoGamma}}
+  name Grade25
+  xpos 270
+  ypos 736
+ }
+ Clamp {
+  name Clamp2
+  xpos 270
+  ypos 762
+ }
+push $Nbb670000
+ Blur {
+  size {{(1-parent.MonoDetail)*100}}
+  name Blur3
+  xpos 547
+  ypos 696
+ }
+ Saturation {
+  saturation {{parent.MonoSaturation*10}}
+  name Saturation9
+  xpos 547
+  ypos 766
+ }
+push $Nbb69a300
+ Merge2 {
+  inputs 2
+  operation overlay
+  name Merge23
+  xpos 629
+  ypos 799
+ }
+push $Nbb670000
+ Merge2 {
+  inputs 2+1
+  operation overlay
+  maskChannelMask rgba.blue
+  invert_mask true
+  mix {{parent.MonoMix}}
+  name Merge24
+  xpos 388
+  ypos 821
+ }
+ Switch {
+  inputs 2
+  which {{MonoMode}}
+  name Switch5
+  xpos 388
+  ypos 905
+ }
+push $Nbb655e00
+ Dot {
+  name Dot13
+  xpos 1087
+  ypos 626
+ }
+ Dot {
+  name Dot12
+  xpos 1087
+  ypos 799
+ }
+push $Nbb656300
+ Saturation {
+  saturation 0
+  name Saturation1
+  xpos 1289
+  ypos 534
+ }
+ Grade {
+  blackpoint {{parent.GrainShadow-1}}
+  whitepoint {{parent.GrainHightlight}}
+  gamma {{parent.GrainGamma}}
+  name Grade2
+  xpos 1289
+  ypos 560
+ }
+ Clamp {
+  name Clamp1
+  xpos 1289
+  ypos 597
+ }
+ Invert {
+  name Invert1
+  xpos 1289
+  ypos 635
+ }
+push $Nbb655e00
+ Copy {
+  inputs 2
+  from0 rgba.red
+  to0 rgba.alpha
+  name Copy2
+  xpos 1126
+  ypos 658
+ }
+ Grain2 {
+  name Grain2_1
+  label "Kodak 5218"
+  xpos 1126
+  ypos 798
+  red_size {{parent.GrainRedSize}}
+  green_size {{parent.GrainGreenSize}}
+  blue_size {{parent.GrainBlueSize}}
+  red_i {{parent.GrainRedIrregularity}}
+  green_i {{parent.GrainGreenIrregularity}}
+  blue_i {{parent.GrainBlueIrregularity}}
+  red_m {{parent.GrainRedIntensity*GrainIntensity}}
+  green_m {{parent.GrainGreenIntensity*GrainIntensity}}
+  blue_m {{parent.GrainBlueIntensity*GrainIntensity}}
+  black {0 0 0}
+  minimum {0 0 0}
+ }
+ Copy {
+  inputs 2
+  from0 rgba.alpha
+  to0 rgba.alpha
+  name Copy3
+  xpos 1122
+  ypos 836
+ }
+ Switch {
+  inputs 3
+  which {{GrainType}}
+  name Switch4
+  xpos 388
+  ypos 998
+ }
+push $Nbb654000
+ Dot {
+  name Dot8
+  xpos 189
+  ypos 491
+ }
+ Dot {
+  name Dot7
+  xpos 189
+  ypos 1047
+ }
+ Switch {
+  inputs 2
+  which {{parent.GrainSwitch}}
+  name Switch3
+  xpos 388
+  ypos 1043
+ }
+ Copy {
+  inputs 2
+  from0 rgba.alpha
+  to0 rgba.alpha
+  name Copy1
+  xpos 388
+  ypos 1089
+ }
+ Crop {
+  box {0 0 {format.r} {format.t}}
+  crop {{parent.blackOutside}}
+  name Crop2
+  xpos 399
+  ypos 1435
+  disable {{1-Crop}}
+ }
+ Shuffle {
+  alpha white
+  name Shuffle19
+  xpos 399
+  ypos 1477
+  disable {{1-AlphaSwitch}}
+ }
+ Switch {
+  inputs 2
+  which {{parent.output_selection}}
+  name Switch6
+  xpos 399
+  ypos 1513
+ }
+ Output {
+  name Output1
+  xpos 399
+  ypos 1537
+ }
+end_group

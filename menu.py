@@ -10,6 +10,13 @@ qtools_menu = nuke.menu("Nuke").addMenu("QTools")
 
 shot_notes.register_panel()
 
+gizmos_menu = qtools_menu.addMenu("Gizmos")
+
+gizmos_menu.addCommand(
+    "CG To Film",
+    "nuke.createNode('CGTOFILM')",
+)
+
 qtools_menu.addCommand(
     "Shot Notes",
     "from qtools import shot_notes; shot_notes.show_shot_notes()",
