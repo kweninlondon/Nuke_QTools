@@ -281,10 +281,22 @@ class ShotNotesWidget(QtWidgets.QWidget):
         layout.addLayout(actions)
 
         self.archives = QtWidgets.QTreeWidget()
-        self.archives.setColumnCount(2)
+        self.archives.setColumnCount(3)
         self.archives.setHeaderHidden(True)
         self.archives.setRootIsDecorated(True)
         self.archives.setAlternatingRowColors(True)
+        archive_header = self.archives.header()
+        archive_header.setStretchLastSection(False)
+        archive_header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.Stretch
+        )
+        archive_header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeToContents
+        )
+        archive_header.setSectionResizeMode(
+            2, QtWidgets.QHeaderView.Fixed
+        )
+        self.archives.setColumnWidth(2, 24)
         self.archives.setToolTip(
             "Expand an archive to see each completed note and its script version."
         )
@@ -336,14 +348,17 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
         self.archives.clear()
 
-        for archive in reversed(self._data["archives"]):
+        for archive_index in range(len(self._data["archives"]) - 1, -1, -1):
+            archive = self._data["archives"][archive_index]
             parent = QtWidgets.QTreeWidgetItem([
                 archive.get("date", ""),
                 "",
+                "",
             ])
             parent.setFirstColumnSpanned(True)
+            self.archives.addTopLevelItem(parent)
 
-            for note in archive.get("notes", []):
+            for note_index, note in enumerate(archive.get("notes", [])):
                 if isinstance(note, dict):
                     text = note.get("text", "")
                     script = note.get("script", "")
@@ -353,12 +368,22 @@ class ShotNotesWidget(QtWidgets.QWidget):
                     text = note
                     script = archive.get("script", "")
 
-                child = QtWidgets.QTreeWidgetItem(parent, [text, script])
+                child = QtWidgets.QTreeWidgetItem(parent, [text, script, ""])
                 child.setTextAlignment(1, QtCore.Qt.AlignRight)
+                child.setToolTip(0, text)
+                child.setToolTip(1, script)
 
-            self.archives.addTopLevelItem(parent)
-
-        self.archives.resizeColumnToContents(1)
+                remove_button = QtWidgets.QToolButton(self.archives)
+                remove_button.setText("×")
+                remove_button.setToolTip("Delete this archived note")
+                remove_button.setAutoRaise(True)
+                remove_button.clicked.connect(
+                    lambda checked=False, archive_index=archive_index,
+                    note_index=note_index: self._remove_archived_note(
+                        archive_index, note_index
+                    )
+                )
+                self.archives.setItemWidget(child, 2, remove_button)
 
         self.archives_toggle.setText(
             "ARCHIVES ({})".format(len(self._data["archives"]))
@@ -486,6 +511,20 @@ class ShotNotesWidget(QtWidgets.QWidget):
             for note in self._data["notes"]
             if note.get("id") != note_id
         ]
+        self._save()
+        self._refresh()
+
+    def _remove_archived_note(self, archive_index, note_index):
+        """Delete one archived note and discard its group when empty."""
+        try:
+            archive = self._data["archives"][archive_index]
+            del archive["notes"][note_index]
+        except (IndexError, KeyError, TypeError):
+            return
+
+        if not archive["notes"]:
+            del self._data["archives"][archive_index]
+
         self._save()
         self._refresh()
 
