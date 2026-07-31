@@ -976,20 +976,15 @@ class DotNameDialog(QtWidgets.QDialog):
         ])
         self.prefix_field.setCurrentText("")
         self.prefix_field.setMinimumWidth(150)
-        self.auto_prefix_button = QtWidgets.QPushButton("Read filename")
-        self.auto_prefix_button.setToolTip(
-            "Choose the first matching prefix rule from the Read filename."
-        )
         self.rules_button = QtWidgets.QPushButton("Edit rules...")
         prefix_layout.addWidget(self.prefix_field)
-        prefix_layout.addWidget(self.auto_prefix_button)
         prefix_layout.addWidget(self.rules_button)
         prefix_layout.addStretch()
         layout.addLayout(prefix_layout)
 
         name_layout = QtWidgets.QHBoxLayout()
         self.name_field = QtWidgets.QLineEdit(
-            _read_frame_name(source) or _read_display_text(source)
+            source.name()
         )
         self.name_field.setMinimumWidth(560)
         self.frame_name_button = QtWidgets.QPushButton(
@@ -1011,7 +1006,7 @@ class DotNameDialog(QtWidgets.QDialog):
             "Replace separators such as underscores and hyphens with spaces."
         )
         self.use_colour_checkbox = QtWidgets.QCheckBox("Use colour")
-        self.use_colour_checkbox.setChecked(True)
+        self.use_colour_checkbox.setChecked(False)
         self.use_colour_checkbox.setToolTip(
             "Colour the Dot from its prefix rule; connected stamps inherit it."
         )
@@ -1035,7 +1030,6 @@ class DotNameDialog(QtWidgets.QDialog):
         self.frame_name_button.clicked.connect(
             self._use_frame_name
         )
-        self.auto_prefix_button.clicked.connect(self._auto_prefix)
         self.rules_button.clicked.connect(self._edit_rules)
         self.remove_special_checkbox.toggled.connect(self._refresh_preview)
         buttons.accepted.connect(self.accept)
@@ -1046,10 +1040,16 @@ class DotNameDialog(QtWidgets.QDialog):
         self._auto_prefix()
 
     def _use_frame_name(self):
-        """Replace the proposed label with the Read filename stem."""
-        self.name_field.setText(
-            _read_frame_name(self._source)
-        )
+        """Load the filename and apply the matched rule's removals."""
+        frame_name = _read_frame_name(self._source)
+        rule = connector_rules.matching_rule(frame_name)
+        removals = rule.get("remove", "") if rule is not None else ""
+        frame_name = connector_rules.remove_patterns(frame_name, removals)
+
+        if self.remove_special_checkbox.isChecked():
+            frame_name = connector_rules.clean_filename_text(frame_name)
+
+        self.name_field.setText(frame_name)
 
     def _auto_prefix(self):
         """Populate the prefix from the first filename rule match."""
@@ -1081,10 +1081,15 @@ class DotNameDialog(QtWidgets.QDialog):
 
     def dot_name(self):
         """Return the entered Dot label."""
+        rule = connector_rules.prefix_rule(
+            self.prefix_field.currentText()
+        )
+        removals = rule.get("remove", "") if rule is not None else ""
         return connector_rules.compose_name(
             self.prefix_field.currentText(),
             self.name_field.text(),
-            self.remove_special_checkbox.isChecked()
+            self.remove_special_checkbox.isChecked(),
+            removals=removals
         )
 
     def dot_colour(self):

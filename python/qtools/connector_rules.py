@@ -16,12 +16,12 @@ SETTING_RULES = "connector_rules_v1"
 # Nuke tile colours use packed RRGGBBAA values.  These defaults deliberately
 # remain user-editable; productions can replace them without changing code.
 DEFAULT_RULES = [
-    {"search": "camera", "prefix": "CAMERA", "colour": 0x5F7F3FFF},
-    {"search": "3d", "prefix": "3D", "colour": 0x5F7F3FFF},
-    {"search": "roto", "prefix": "ROTO", "colour": 0x4F8F5FFF},
-    {"search": "bty, utils", "prefix": "CG", "colour": 0xD68B35FF},
-    {"search": "dmp", "prefix": "DMP", "colour": 0x6A5A8FFF},
-    {"search": "plate", "prefix": "PLATE", "colour": 0x4E79A7FF},
+    {"search": "camera", "prefix": "CAMERA", "remove": "", "colour": 0x5F7F3FFF},
+    {"search": "3d", "prefix": "3D", "remove": "", "colour": 0x5F7F3FFF},
+    {"search": "roto", "prefix": "ROTO", "remove": "", "colour": 0x4F8F5FFF},
+    {"search": "bty, utils", "prefix": "CG", "remove": "", "colour": 0xD68B35FF},
+    {"search": "dmp", "prefix": "DMP", "remove": "", "colour": 0x6A5A8FFF},
+    {"search": "plate", "prefix": "PLATE", "remove": "", "colour": 0x4E79A7FF},
 ]
 
 
@@ -41,6 +41,7 @@ def rules():
                     {
                         "search": str(item.get("search", "")),
                         "prefix": str(item.get("prefix", "")).strip().upper(),
+                        "remove": str(item.get("remove", "")),
                         "colour": int(item.get("colour", 0)),
                     }
                     for item in saved
@@ -99,8 +100,28 @@ def clean_filename_text(value):
     return " ".join(re.sub(r"[^\w]+", " ", str(value or "")).split())
 
 
-def compose_name(prefix, name, remove_special=True):
+def remove_patterns(value, patterns):
+    """Remove comma-separated masks; each # represents exactly one digit."""
+    result = str(value or "")
+
+    for pattern in re.split(r"[,;|]+", str(patterns or "")):
+        pattern = pattern.strip()
+
+        if not pattern:
+            continue
+
+        expression = "".join(
+            r"\d" if character == "#" else re.escape(character)
+            for character in pattern
+        )
+        result = re.sub(expression, "", result, flags=re.IGNORECASE)
+
+    return result
+
+
+def compose_name(prefix, name, remove_special=True, removals=""):
     prefix = " ".join(str(prefix or "").split()).upper()
+    name = remove_patterns(name, removals)
     name = clean_filename_text(name) if remove_special else " ".join(
         str(name or "").split()
     )
@@ -119,7 +140,7 @@ def node_colour(node):
 
 
 def set_node_colour(node, colour):
-    if node is None or not colour or "tile_color" not in node.knobs():
+    if node is None or colour is None or "tile_color" not in node.knobs():
         return
 
     node["tile_color"].setValue(int(colour))
@@ -131,15 +152,16 @@ class RuleEditorDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super(RuleEditorDialog, self).__init__(parent)
         self.setWindowTitle("Connector colour rules")
-        self.resize(720, 420)
+        self.resize(900, 420)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
             "Rules are checked from top to bottom. Separate alternative "
-            "filename searches with commas."
+            "filename searches or removal masks with commas. In Remove, "
+            "each # matches one digit."
         ))
-        self.table = QtWidgets.QTableWidget(0, 3)
+        self.table = QtWidgets.QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
-            ["Name search", "Prefix", "Colour"]
+            ["Name search", "Prefix", "Remove", "Colour"]
         )
         self.table.horizontalHeader().setSectionResizeMode(
             0, QtWidgets.QHeaderView.Stretch
@@ -148,7 +170,10 @@ class RuleEditorDialog(QtWidgets.QDialog):
             1, QtWidgets.QHeaderView.ResizeToContents
         )
         self.table.horizontalHeader().setSectionResizeMode(
-            2, QtWidgets.QHeaderView.ResizeToContents
+            2, QtWidgets.QHeaderView.Stretch
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            3, QtWidgets.QHeaderView.ResizeToContents
         )
         layout.addWidget(self.table)
 
@@ -184,21 +209,57 @@ class RuleEditorDialog(QtWidgets.QDialog):
         self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(
             rule.get("prefix", "")
         ))
+        remove_item = QtWidgets.QTableWidgetItem(rule.get("remove", ""))
+        remove_item.setToolTip(
+            "Examples: v### removes v followed by three digits; "
+            "AOI_###_##_## removes that numbered filename prefix."
+        )
+        self.table.setItem(row, 2, remove_item)
         button = QtWidgets.QPushButton()
-        colour = int(rule.get("colour", 0x666666FF))
+        colour = int(rule.get("colour", 0))
         button.setProperty("nuke_colour", colour)
         self._style_colour_button(button, colour)
         button.clicked.connect(
             lambda _checked=False, control=button: self._choose_colour(control)
         )
-        self.table.setCellWidget(row, 2, button)
+        self.table.setCellWidget(row, 3, button)
 
     def _style_colour_button(self, button, colour):
+        if not colour:
+            button.setText("No colour")
+            button.setStyleSheet("QPushButton { min-width: 90px; }")
+            button.setToolTip(
+                "No Nuke tile colour. Click to choose a colour; "
+                "right-click to clear."
+            )
+            button.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            try:
+                button.customContextMenuRequested.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            button.customContextMenuRequested.connect(
+                lambda _position, control=button: self._clear_colour(control)
+            )
+            return
+
         rgb = (int(colour) >> 8) & 0xFFFFFF
         button.setText("#{:06X}".format(rgb))
         button.setStyleSheet(
             "QPushButton { background-color: #%06X; min-width: 90px; }" % rgb
         )
+        button.setToolTip("Click to change; right-click for No colour.")
+        button.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        try:
+            button.customContextMenuRequested.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        button.customContextMenuRequested.connect(
+            lambda _position, control=button: self._clear_colour(control)
+        )
+
+    def _clear_colour(self, button):
+        button.setProperty("nuke_colour", 0)
+        self._style_colour_button(button, 0)
 
     def _choose_colour(self, button):
         colour = int(button.property("nuke_colour"))
@@ -237,14 +298,17 @@ class RuleEditorDialog(QtWidgets.QDialog):
         for row in range(self.table.rowCount()):
             search_item = self.table.item(row, 0)
             prefix_item = self.table.item(row, 1)
-            colour_button = self.table.cellWidget(row, 2)
+            remove_item = self.table.item(row, 2)
+            colour_button = self.table.cellWidget(row, 3)
             search = search_item.text().strip() if search_item else ""
             prefix = prefix_item.text().strip().upper() if prefix_item else ""
+            remove = remove_item.text().strip() if remove_item else ""
 
             if search and prefix:
                 result.append({
                     "search": search,
                     "prefix": prefix,
+                    "remove": remove,
                     "colour": int(colour_button.property("nuke_colour")),
                 })
 
