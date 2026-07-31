@@ -73,6 +73,25 @@ def _parse_note_text(value):
     return notes
 
 
+def _today():
+    """Return today's date in the format used by Shot Notes."""
+    return datetime.datetime.now().strftime("%d/%m/%y")
+
+
+def _note_tooltip(note, include_script=True):
+    """Return the recorded lifecycle details for a note."""
+    created = note.get("created_date") or "Not recorded"
+    completed = note.get("completed_date") or "Not completed"
+    lines = ["Created: {}".format(created)]
+
+    if include_script:
+        script = note.get("script") or "Not completed"
+        lines.append("File: {}".format(script))
+
+    lines.append("Completed: {}".format(completed))
+    return "\n".join(lines)
+
+
 def _load_data(path):
     """Load notes from path, returning an empty document when absent."""
     if not path or not os.path.exists(path):
@@ -139,9 +158,7 @@ class NoteRow(QtWidgets.QWidget):
 
         self.checkbox = QtWidgets.QCheckBox(note["text"])
         self.checkbox.setChecked(bool(note.get("done", False)))
-        self.checkbox.setToolTip(
-            "Mark this note as done. Changes are saved automatically."
-        )
+        self.checkbox.setToolTip(_note_tooltip(note))
         layout.addWidget(self.checkbox, 1)
 
         remove_button = QtWidgets.QToolButton()
@@ -370,8 +387,14 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
                 child = QtWidgets.QTreeWidgetItem(parent, [text, script, ""])
                 child.setTextAlignment(1, QtCore.Qt.AlignRight)
-                child.setToolTip(0, text)
-                child.setToolTip(1, script)
+                if isinstance(note, dict):
+                    tooltip = _note_tooltip(note, include_script=False)
+                else:
+                    tooltip = (
+                        "Created: Not recorded\nCompleted: Not recorded"
+                    )
+                child.setToolTip(0, tooltip)
+                child.setToolTip(1, tooltip)
 
                 remove_button = QtWidgets.QToolButton(self.archives)
                 remove_button.setText("×")
@@ -481,6 +504,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
                 "id": uuid.uuid4().hex,
                 "text": text,
                 "done": False,
+                "created_date": _today(),
             })
 
         self._save()
@@ -498,8 +522,12 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
                 if is_done and not was_done:
                     note["script"] = os.path.basename(_script_path())
+                    note["completed_date"] = _today()
                 elif not is_done:
                     note.pop("script", None)
+                    note.pop("completed_date", None)
+
+                row.checkbox.setToolTip(_note_tooltip(note))
 
         self._save()
         self._update_action_buttons()
@@ -583,6 +611,8 @@ class ShotNotesWidget(QtWidgets.QWidget):
             {
                 "text": note["text"],
                 "script": note.get("script", ""),
+                "created_date": note.get("created_date", ""),
+                "completed_date": note.get("completed_date", ""),
             }
             for note in self._data["notes"]
             if note.get("done", False)
@@ -592,7 +622,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
             return
 
         self._data["archives"].append({
-            "date": datetime.datetime.now().strftime("%d/%m/%y"),
+            "date": _today(),
             "notes": completed_notes,
         })
         self._data["notes"] = [
