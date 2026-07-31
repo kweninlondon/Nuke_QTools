@@ -274,18 +274,19 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
         self.archive_done_button = QtWidgets.QPushButton("Archive Done")
         self.archive_done_button.setToolTip(
-            "Move checked notes into a dated archive for this script version."
+            "Move checked notes into a dated archive."
         )
         self.archive_done_button.clicked.connect(self._archive_done)
         actions.addWidget(self.archive_done_button)
         layout.addLayout(actions)
 
         self.archives = QtWidgets.QTreeWidget()
+        self.archives.setColumnCount(2)
         self.archives.setHeaderHidden(True)
         self.archives.setRootIsDecorated(True)
         self.archives.setAlternatingRowColors(True)
         self.archives.setToolTip(
-            "Expand an archive to see the completed notes from that version."
+            "Expand an archive to see each completed note and its script version."
         )
         self.archives_toggle = QtWidgets.QToolButton()
         self.archives_toggle.setText("ARCHIVES")
@@ -336,16 +337,28 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self.archives.clear()
 
         for archive in reversed(self._data["archives"]):
-            title = "{}  {}".format(
+            parent = QtWidgets.QTreeWidgetItem([
                 archive.get("date", ""),
-                archive.get("script", "")
-            ).strip()
-            parent = QtWidgets.QTreeWidgetItem([title])
+                "",
+            ])
+            parent.setFirstColumnSpanned(True)
 
-            for text in archive.get("notes", []):
-                QtWidgets.QTreeWidgetItem(parent, [text])
+            for note in archive.get("notes", []):
+                if isinstance(note, dict):
+                    text = note.get("text", "")
+                    script = note.get("script", "")
+                else:
+                    # Archives written by older versions stored the script on
+                    # the date group and each note as a plain string.
+                    text = note
+                    script = archive.get("script", "")
+
+                child = QtWidgets.QTreeWidgetItem(parent, [text, script])
+                child.setTextAlignment(1, QtCore.Qt.AlignRight)
 
             self.archives.addTopLevelItem(parent)
+
+        self.archives.resizeColumnToContents(1)
 
         self.archives_toggle.setText(
             "ARCHIVES ({})".format(len(self._data["archives"]))
@@ -454,7 +467,14 @@ class ShotNotesWidget(QtWidgets.QWidget):
             row = self._rows.get(note["id"])
 
             if row is not None:
-                note["done"] = row.checkbox.isChecked()
+                was_done = bool(note.get("done", False))
+                is_done = row.checkbox.isChecked()
+                note["done"] = is_done
+
+                if is_done and not was_done:
+                    note["script"] = os.path.basename(_script_path())
+                elif not is_done:
+                    note.pop("script", None)
 
         self._save()
         self._update_action_buttons()
@@ -519,16 +539,22 @@ class ShotNotesWidget(QtWidgets.QWidget):
         )
 
     def _archive_done(self):
-        """Archive completed notes with the current date and script name."""
-        texts = self._done_texts()
+        """Archive completed notes under the current date."""
+        completed_notes = [
+            {
+                "text": note["text"],
+                "script": note.get("script", ""),
+            }
+            for note in self._data["notes"]
+            if note.get("done", False)
+        ]
 
-        if not texts:
+        if not completed_notes:
             return
 
         self._data["archives"].append({
             "date": datetime.datetime.now().strftime("%d/%m/%y"),
-            "script": os.path.basename(_script_path()),
-            "notes": texts,
+            "notes": completed_notes,
         })
         self._data["notes"] = [
             note
