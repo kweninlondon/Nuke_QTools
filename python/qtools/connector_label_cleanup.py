@@ -5,6 +5,8 @@ import re
 
 import nuke
 
+from qtools import connector_rules
+
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError:
@@ -321,11 +323,30 @@ def _collect_candidates():
                 _has_hidden_input(stamp)
                 for stamp, _name in connections
             )
+            colour_rule = connector_rules.rule_for_name(
+                candidate["preferred_name"]
+            )
+            expected_colour = (
+                int(colour_rule["colour"])
+                if colour_rule is not None
+                else 0
+            )
+            colours_are_healthy = (
+                not expected_colour
+                or (
+                    connector_rules.node_colour(dot) == expected_colour
+                    and all(
+                        connector_rules.node_colour(stamp) == expected_colour
+                        for stamp, _name in connections
+                    )
+                )
+            )
 
             candidate["healthy"] = (
                 dot_is_healthy
                 and stamps_are_healthy
                 and inputs_are_healthy
+                and colours_are_healthy
             )
 
         candidates.append(candidate)
@@ -601,7 +622,7 @@ def _center_node_on(replacement, original):
     )
 
 
-def _convert_stamp_candidate(candidate, native_name):
+def _convert_stamp_candidate(candidate, native_name, use_colour=True):
     """Replace one Stamps Anchor group with native connector nodes."""
     anchor = candidate["anchor"]
     wireds = candidate["wireds"]
@@ -613,6 +634,13 @@ def _convert_stamp_candidate(candidate, native_name):
 
     source_dot = nuke.nodes.Dot()
     source_dot["label"].setValue(_from_label(native_name))
+    colour_rule = (
+        connector_rules.rule_for_name(native_name)
+        if use_colour
+        else None
+    )
+    colour = int(colour_rule["colour"]) if colour_rule is not None else 0
+    connector_rules.set_node_colour(source_dot, colour)
 
     if "hide_input" in source_dot.knobs():
         source_dot["hide_input"].setValue(False)
@@ -632,6 +660,7 @@ def _convert_stamp_candidate(candidate, native_name):
 
         replacement.setInput(0, source_dot)
         replacement["label"].setValue("To {}".format(native_name))
+        connector_rules.set_node_colour(replacement, colour)
 
         if "postage_stamp" in replacement.knobs():
             replacement["postage_stamp"].setValue(True)
@@ -752,6 +781,23 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         layout.addLayout(header_layout)
         self.summary_label = QtWidgets.QLabel()
         layout.addWidget(self.summary_label)
+
+        colour_layout = QtWidgets.QHBoxLayout()
+        self.recolour_checkbox = QtWidgets.QCheckBox(
+            "Recolour selected connectors using rules"
+        )
+        self.recolour_checkbox.setChecked(True)
+        self.recolour_checkbox.setToolTip(
+            "Use the first name word as the colour code when applying cleanup."
+        )
+        edit_rules_button = QtWidgets.QPushButton("Edit colour rules...")
+        edit_rules_button.setToolTip(
+            "Edit filename searches, generated prefixes and Nuke tile colours."
+        )
+        colour_layout.addWidget(self.recolour_checkbox)
+        colour_layout.addWidget(edit_rules_button)
+        colour_layout.addStretch()
+        layout.addLayout(colour_layout)
 
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(len(self.HEADERS))
@@ -933,6 +979,17 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         cancel_button.clicked.connect(self.reject)
         apply_button.clicked.connect(self._apply_selected)
         self.reload_button.clicked.connect(self._reload)
+        edit_rules_button.clicked.connect(self._edit_colour_rules)
+        self.recolour_checkbox.toggled.connect(self._refresh_previews)
+
+    def _refresh_previews(self, _checked=None):
+        for row_data in self._rows:
+            self._update_preview(row_data)
+
+    def _edit_colour_rules(self):
+        """Edit shared rules, then rescan so colour-only fixes are current."""
+        if connector_rules.edit_rules(self) == QtWidgets.QDialog.Accepted:
+            self._reload()
 
     def _reload(self):
         """Close this snapshot and rebuild it from the current comp."""
@@ -1326,9 +1383,12 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
             0,
             (
                 "Result — Dot: {}  |  PostageStamps: To {}  |  "
-                "inputs hidden".format(
+                "inputs hidden{}".format(
                     _clean_text(_from_label(name)),
-                    name
+                    name,
+                    "  |  recolour by {}".format(name.split()[0])
+                    if name and self.recolour_checkbox.isChecked()
+                    else ""
                 )
                 if name
                 else "Result — enter a name to preview this fix"
@@ -1666,6 +1726,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                 candidate["dot"]["label"].setValue(
                     _from_label(canonical_name)
                 )
+                colour_rule = connector_rules.rule_for_name(canonical_name)
+                colour = (
+                    int(colour_rule["colour"])
+                    if colour_rule is not None
+                    and self.recolour_checkbox.isChecked()
+                    else 0
+                )
+                connector_rules.set_node_colour(candidate["dot"], colour)
 
                 for stamp, _stamp_name in candidate["connections"]:
                     stamp["label"].setValue(
@@ -1675,8 +1743,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     if "hide_input" in stamp.knobs():
                         stamp["hide_input"].setValue(True)
 
+                    connector_rules.set_node_colour(stamp, colour)
+
             for candidate, native_name in conversions:
-                _convert_stamp_candidate(candidate, native_name)
+                _convert_stamp_candidate(
+                    candidate,
+                    native_name,
+                    use_colour=self.recolour_checkbox.isChecked()
+                )
         except Exception as error:
             undo.end()
 

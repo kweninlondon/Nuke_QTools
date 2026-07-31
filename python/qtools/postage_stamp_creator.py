@@ -62,6 +62,8 @@ import re
 
 import nuke
 
+from qtools import connector_rules
+
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError:
@@ -659,6 +661,10 @@ def _configure_postage_stamp(stamp, source):
         stamp["hide_input"].setValue(True)
 
     _set_target_label(stamp, source)
+    connector_rules.set_node_colour(
+        stamp,
+        connector_rules.node_colour(source)
+    )
 
 
 def _create_postage_stamp(source, target_position=None, frame_new=True):
@@ -917,6 +923,10 @@ def _retarget_nodes(targets, source):
 
         _set_target_label(target, source)
 
+        connector_rules.set_node_colour(
+            target,
+            connector_rules.node_colour(source)
+        )
 
         if "hide_input" in target.knobs():
             target["hide_input"].setValue(True)
@@ -955,11 +965,31 @@ class DotNameDialog(QtWidgets.QDialog):
         self.setWindowTitle("Enter Dot name")
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel("Enter Dot name:"))
+        layout.addWidget(QtWidgets.QLabel("Create connector Dot:"))
+
+        prefix_layout = QtWidgets.QHBoxLayout()
+        prefix_layout.addWidget(QtWidgets.QLabel("Prefix:"))
+        self.prefix_field = QtWidgets.QComboBox()
+        self.prefix_field.setEditable(True)
+        self.prefix_field.addItems([
+            rule["prefix"] for rule in connector_rules.rules()
+        ])
+        self.prefix_field.setCurrentText("")
+        self.prefix_field.setMinimumWidth(150)
+        self.auto_prefix_button = QtWidgets.QPushButton("Read filename")
+        self.auto_prefix_button.setToolTip(
+            "Choose the first matching prefix rule from the Read filename."
+        )
+        self.rules_button = QtWidgets.QPushButton("Edit rules...")
+        prefix_layout.addWidget(self.prefix_field)
+        prefix_layout.addWidget(self.auto_prefix_button)
+        prefix_layout.addWidget(self.rules_button)
+        prefix_layout.addStretch()
+        layout.addLayout(prefix_layout)
 
         name_layout = QtWidgets.QHBoxLayout()
         self.name_field = QtWidgets.QLineEdit(
-            _read_display_text(source)
+            _read_frame_name(source) or _read_display_text(source)
         )
         self.name_field.setMinimumWidth(560)
         self.frame_name_button = QtWidgets.QPushButton(
@@ -971,6 +1001,24 @@ class DotNameDialog(QtWidgets.QDialog):
         name_layout.addWidget(self.name_field)
         name_layout.addWidget(self.frame_name_button)
         layout.addLayout(name_layout)
+
+        option_layout = QtWidgets.QHBoxLayout()
+        self.remove_special_checkbox = QtWidgets.QCheckBox(
+            "Remove special characters"
+        )
+        self.remove_special_checkbox.setChecked(True)
+        self.remove_special_checkbox.setToolTip(
+            "Replace separators such as underscores and hyphens with spaces."
+        )
+        self.use_colour_checkbox = QtWidgets.QCheckBox("Use colour")
+        self.use_colour_checkbox.setChecked(True)
+        self.use_colour_checkbox.setToolTip(
+            "Colour the Dot from its prefix rule; connected stamps inherit it."
+        )
+        option_layout.addWidget(self.remove_special_checkbox)
+        option_layout.addWidget(self.use_colour_checkbox)
+        option_layout.addStretch()
+        layout.addLayout(option_layout)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok
@@ -987,11 +1035,15 @@ class DotNameDialog(QtWidgets.QDialog):
         self.frame_name_button.clicked.connect(
             self._use_frame_name
         )
+        self.auto_prefix_button.clicked.connect(self._auto_prefix)
+        self.rules_button.clicked.connect(self._edit_rules)
+        self.remove_special_checkbox.toggled.connect(self._refresh_preview)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         self.name_field.selectAll()
         self.name_field.setFocus()
+        self._auto_prefix()
 
     def _use_frame_name(self):
         """Replace the proposed label with the Read filename stem."""
@@ -999,9 +1051,51 @@ class DotNameDialog(QtWidgets.QDialog):
             _read_frame_name(self._source)
         )
 
+    def _auto_prefix(self):
+        """Populate the prefix from the first filename rule match."""
+        rule = connector_rules.matching_rule(
+            _read_frame_name(self._source)
+        )
+
+        if rule is not None:
+            self.prefix_field.setCurrentText(rule["prefix"])
+        else:
+            self.prefix_field.setCurrentText("")
+
+    def _edit_rules(self):
+        """Edit shared rules and refresh the available prefixes."""
+        connector_rules.edit_rules(self)
+        current = self.prefix_field.currentText()
+        self.prefix_field.clear()
+        self.prefix_field.addItems([
+            rule["prefix"] for rule in connector_rules.rules()
+        ])
+        self.prefix_field.setCurrentText(current)
+
+    def _refresh_preview(self, _checked=None):
+        """Apply separator cleanup immediately so the proposed name is clear."""
+        if self.remove_special_checkbox.isChecked():
+            self.name_field.setText(
+                connector_rules.clean_filename_text(self.name_field.text())
+            )
+
     def dot_name(self):
         """Return the entered Dot label."""
-        return _clean_text(self.name_field.text())
+        return connector_rules.compose_name(
+            self.prefix_field.currentText(),
+            self.name_field.text(),
+            self.remove_special_checkbox.isChecked()
+        )
+
+    def dot_colour(self):
+        """Return the selected prefix colour, or zero when disabled."""
+        if not self.use_colour_checkbox.isChecked():
+            return 0
+
+        rule = connector_rules.prefix_rule(
+            self.prefix_field.currentText()
+        )
+        return int(rule["colour"]) if rule is not None else 0
 
 
 def _create_named_read_dot(source):
@@ -1022,6 +1116,8 @@ def _create_named_read_dot(source):
 
     if "label" in dot.knobs():
         dot["label"].setValue(_from_label(dot_name))
+
+    connector_rules.set_node_colour(dot, dialog.dot_colour())
 
     source_height = source.screenHeight()
     target_x = source.xpos() + int(
