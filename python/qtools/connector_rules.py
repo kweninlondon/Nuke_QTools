@@ -18,10 +18,10 @@ SETTING_RULES = "connector_rules_v1"
 DEFAULT_RULES = [
     {"search": "camera", "prefix": "CAMERA", "remove": "", "colour": 0x5F7F3FFF},
     {"search": "3d", "prefix": "3D", "remove": "", "colour": 0x5F7F3FFF},
-    {"search": "roto", "prefix": "ROTO", "remove": "", "colour": 0x4F8F5FFF},
-    {"search": "bty, utils", "prefix": "CG", "remove": "", "colour": 0xD68B35FF},
-    {"search": "dmp", "prefix": "DMP", "remove": "", "colour": 0x6A5A8FFF},
-    {"search": "plate", "prefix": "PLATE", "remove": "", "colour": 0x4E79A7FF},
+    {"search": "roto", "prefix": "ROTO", "remove": "_", "colour": 0x4F8F5FFF},
+    {"search": "bty, utils", "prefix": "CG", "remove": "_", "colour": 0},
+    {"search": "dmp", "prefix": "DMP", "remove": "", "colour": 0},
+    {"search": "plate", "prefix": "PLATE", "remove": "_", "colour": 0},
 ]
 
 

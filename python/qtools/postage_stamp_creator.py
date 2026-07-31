@@ -138,6 +138,17 @@ def _read_frame_name(node):
     )
 
 
+def _has_file_path(node):
+    """Return True for any node with a non-empty file knob."""
+    if node is None or "file" not in node.knobs():
+        return False
+
+    try:
+        return bool(str(node["file"].value() or "").strip())
+    except Exception:
+        return False
+
+
 def _read_display_text(node):
     """Return the source-menu display text for a Read node."""
     node_name = node.name()
@@ -373,15 +384,14 @@ def _labelled_dots(excluded_nodes=None):
     )
 
 
-def _read_nodes(excluded_nodes=None):
-    """Return every Read node except nodes included in excluded_nodes."""
+def _file_source_nodes(excluded_nodes=None):
+    """Return every file-backed node except nodes included in excluded_nodes."""
     excluded_nodes = set(excluded_nodes or [])
 
     return sorted(
         (
-            node
-            for node in nuke.allNodes("Read")
-            if node not in excluded_nodes
+            node for node in nuke.allNodes()
+            if node not in excluded_nodes and _has_file_path(node)
         ),
         key=lambda node: (
             _read_display_text(node).lower(),
@@ -998,19 +1008,11 @@ class DotNameDialog(QtWidgets.QDialog):
         layout.addLayout(name_layout)
 
         option_layout = QtWidgets.QHBoxLayout()
-        self.remove_special_checkbox = QtWidgets.QCheckBox(
-            "Remove special characters"
-        )
-        self.remove_special_checkbox.setChecked(True)
-        self.remove_special_checkbox.setToolTip(
-            "Replace separators such as underscores and hyphens with spaces."
-        )
         self.use_colour_checkbox = QtWidgets.QCheckBox("Use colour")
         self.use_colour_checkbox.setChecked(False)
         self.use_colour_checkbox.setToolTip(
             "Colour the Dot from its prefix rule; connected stamps inherit it."
         )
-        option_layout.addWidget(self.remove_special_checkbox)
         option_layout.addWidget(self.use_colour_checkbox)
         option_layout.addStretch()
         layout.addLayout(option_layout)
@@ -1031,13 +1033,13 @@ class DotNameDialog(QtWidgets.QDialog):
             self._use_frame_name
         )
         self.rules_button.clicked.connect(self._edit_rules)
-        self.remove_special_checkbox.toggled.connect(self._refresh_preview)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        self._auto_prefix()
+        self._apply_rule_removals()
         self.name_field.selectAll()
         self.name_field.setFocus()
-        self._auto_prefix()
 
     def _use_frame_name(self):
         """Load the filename and apply the matched rule's removals."""
@@ -1045,10 +1047,6 @@ class DotNameDialog(QtWidgets.QDialog):
         rule = connector_rules.matching_rule(frame_name)
         removals = rule.get("remove", "") if rule is not None else ""
         frame_name = connector_rules.remove_patterns(frame_name, removals)
-
-        if self.remove_special_checkbox.isChecked():
-            frame_name = connector_rules.clean_filename_text(frame_name)
-
         self.name_field.setText(frame_name)
 
     def _auto_prefix(self):
@@ -1071,13 +1069,15 @@ class DotNameDialog(QtWidgets.QDialog):
             rule["prefix"] for rule in connector_rules.rules()
         ])
         self.prefix_field.setCurrentText(current)
+        self._apply_rule_removals()
 
-    def _refresh_preview(self, _checked=None):
-        """Apply separator cleanup immediately so the proposed name is clear."""
-        if self.remove_special_checkbox.isChecked():
-            self.name_field.setText(
-                connector_rules.clean_filename_text(self.name_field.text())
-            )
+    def _apply_rule_removals(self):
+        """Apply the chosen prefix rule's masks to the visible proposal."""
+        rule = connector_rules.prefix_rule(self.prefix_field.currentText())
+        removals = rule.get("remove", "") if rule is not None else ""
+        self.name_field.setText(
+            connector_rules.remove_patterns(self.name_field.text(), removals)
+        )
 
     def dot_name(self):
         """Return the entered Dot label."""
@@ -1088,7 +1088,7 @@ class DotNameDialog(QtWidgets.QDialog):
         return connector_rules.compose_name(
             self.prefix_field.currentText(),
             self.name_field.text(),
-            self.remove_special_checkbox.isChecked(),
+            False,
             removals=removals
         )
 
@@ -1276,16 +1276,19 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         )
 
         self.show_combo = QtWidgets.QComboBox()
-        self.show_combo.addItems(["Dots", "Read", "All"])
+        self.show_combo.addItems(["Dots", "Files", "All"])
         saved_show = str(
             self._settings.value(SETTING_SHOW, "Dots")
         )
+        if saved_show == "Read":
+            saved_show = "Files"
         show_index = self.show_combo.findText(saved_show)
         self.show_combo.setCurrentIndex(
             show_index if show_index >= 0 else 0
         )
         self.show_combo.setToolTip(
-            "Choose whether the source list contains Dots, Reads, or both."
+            "Choose whether the source list contains Dots, file-backed nodes, "
+            "or both."
         )
         title_layout.addWidget(self.show_combo)
 
@@ -1296,7 +1299,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
             _setting_bool(SETTING_CREATE_DOT, True)
         )
         self.create_dot_checkbox.setToolTip(
-            "Create a named Dot from a chosen Read before creating its PostageStamp."
+            "Create a named Dot from a chosen file-backed node before creating "
+            "its PostageStamp."
         )
 
         self.fix_dot_name_checkbox = QtWidgets.QCheckBox(
@@ -1314,7 +1318,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
         self.search_field = QtWidgets.QLineEdit()
         self.search_field.setPlaceholderText(
-            "Search Viewer, labelled Dots, or Reads..."
+            "Search Viewer, labelled Dots, or file-backed nodes..."
         )
         self.search_field.setClearButtonEnabled(True)
         self.search_field.installEventFilter(self)
@@ -1436,7 +1440,7 @@ class SourceSelectionDialog(QtWidgets.QDialog):
         """Show only options relevant to the selected source types."""
         show_sources = self.show_combo.currentText()
         self.create_dot_checkbox.setVisible(
-            show_sources in {"Read", "All"}
+            show_sources in {"Files", "All"}
         )
         self.fix_dot_name_checkbox.setVisible(
             show_sources in {"Dots", "All"}
@@ -1741,12 +1745,12 @@ class SourceSelectionDialog(QtWidgets.QDialog):
                     dot
                 )
 
-        if show_sources in {"Read", "All"}:
-            for read in _read_nodes(
+        if show_sources in {"Files", "All"}:
+            for file_node in _file_source_nodes(
                 excluded_nodes=self._excluded_nodes
             ):
-                display_text = _read_display_text(read)
-                frame_name = _read_frame_name(read)
+                display_text = _read_display_text(file_node)
+                frame_name = _read_frame_name(file_node)
 
                 if frame_name and frame_name != display_text:
                     display_text = "{} ({})".format(
@@ -1756,7 +1760,8 @@ class SourceSelectionDialog(QtWidgets.QDialog):
 
                 self._add_entry(
                     display_text,
-                    read
+                    file_node,
+                    file_node.Class()
                 )
 
         self._select_first_available_item()
@@ -1943,7 +1948,7 @@ def _create_from_chosen_source(
         return reconnected
 
     if (
-        source.Class() == "Read"
+        _has_file_path(source)
         and _setting_bool(SETTING_CREATE_DOT, True)
     ):
         dot = _nearby_from_dot(source)
