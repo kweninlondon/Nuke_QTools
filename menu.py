@@ -42,7 +42,7 @@ wired_copy_menu = qtools_menu.addMenu("Wired Copy")
 wired_copy_menu.addCommand(
     "Copy with Inputs",
     "from qtools import wired_copy; wired_copy.copy_with_inputs()",
-    "Ctrl+Shift+C",
+    "Ctrl+C",
 )
 
 wired_copy_menu.addCommand(
