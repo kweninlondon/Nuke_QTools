@@ -68,6 +68,54 @@ def _native_output_connectors():
     return connectors
 
 
+def _update_connector_colours_from_rules():
+    """Apply saved colours to every matching native connector group."""
+    changed_nodes = set()
+    matched_nodes = set()
+
+    for connector in _native_output_connectors():
+        try:
+            source = connector.input(0)
+        except Exception:
+            source = None
+
+        source_name = (
+            _connector_name(source["label"].value())
+            if (
+                source is not None
+                and source.Class() == "Dot"
+                and "label" in source.knobs()
+            )
+            else ""
+        )
+        connector_name = (
+            _connector_name(connector["label"].value())
+            if "label" in connector.knobs()
+            else ""
+        )
+        rule = connector_rules.rule_for_name(
+            source_name or connector_name
+        )
+
+        if rule is None:
+            continue
+
+        colour = int(rule["colour"])
+        targets = [connector]
+
+        if source is not None and source.Class() == "Dot":
+            targets.append(source)
+
+        for node in targets:
+            matched_nodes.add(node)
+
+            if connector_rules.node_colour(node) != colour:
+                connector_rules.set_node_colour(node, colour)
+                changed_nodes.add(node)
+
+    return len(changed_nodes), len(matched_nodes)
+
+
 def _nuke_main_window():
     """Return Nuke's main window when available."""
     application = QtWidgets.QApplication.instance()
@@ -796,6 +844,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         )
         colour_layout.addWidget(self.recolour_checkbox)
         colour_layout.addWidget(edit_rules_button)
+        update_colours_button = QtWidgets.QPushButton("Update colours")
+        update_colours_button.setToolTip(
+            "Reapply saved colour rules to every matching connector group."
+        )
+        colour_layout.addWidget(update_colours_button)
         colour_layout.addStretch()
         layout.addLayout(colour_layout)
 
@@ -980,6 +1033,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         apply_button.clicked.connect(self._apply_selected)
         self.reload_button.clicked.connect(self._reload)
         edit_rules_button.clicked.connect(self._edit_colour_rules)
+        update_colours_button.clicked.connect(self._update_all_colours)
         self.recolour_checkbox.toggled.connect(self._refresh_previews)
 
     def _refresh_previews(self, _checked=None):
@@ -990,6 +1044,31 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         """Edit shared rules, then rescan so colour-only fixes are current."""
         if connector_rules.edit_rules(self) == QtWidgets.QDialog.Accepted:
             self._reload()
+
+    def _update_all_colours(self):
+        """Reapply colour rules independently of label cleanup selection."""
+        undo = nuke.Undo()
+        undo.begin("Update Connector Colours")
+
+        try:
+            changed_count, matched_count = _update_connector_colours_from_rules()
+        finally:
+            undo.end()
+
+        if not matched_count:
+            nuke.message(
+                "No connector names match the current colour rules."
+            )
+            return
+
+        if not changed_count:
+            nuke.message(
+                "All {} matching connector nodes already have the correct "
+                "colour.".format(matched_count)
+            )
+            return
+
+        self._reload()
 
     def _reload(self):
         """Close this snapshot and rebuild it from the current comp."""
@@ -1785,23 +1864,6 @@ def clean_up_connector_labels(on_close=None):
 
     safe, conflicts, duplicates, unnamed = _collect_candidates()
     stamp_candidates, unresolved_stamps = _collect_stamp_candidates()
-
-    if (
-        not safe
-        and not conflicts
-        and not duplicates
-        and not unnamed
-        and not stamp_candidates
-        and not unresolved_stamps
-    ):
-        nuke.message(
-            "All eligible connector labels are already clean."
-        )
-
-        if on_close is not None:
-            QtCore.QTimer.singleShot(0, on_close)
-
-        return 0
 
     _ACTIVE_DIALOG = ConnectorCleanupDialog(
         safe,
