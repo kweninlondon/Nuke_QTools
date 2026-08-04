@@ -163,6 +163,61 @@ def _backdrop_geometry(nodes, margin_factor, font_size):
     return left, top, right - left, bottom - top
 
 
+def _closest_outward_edge(current, candidates, direction):
+    """Return the nearest candidate that only expands the new backdrop."""
+    eligible = [
+        candidate for candidate, tolerance in candidates
+        if (
+            (candidate <= current if direction < 0 else candidate >= current)
+            and abs(candidate - current) <= tolerance
+        )
+    ]
+
+    if not eligible:
+        return current
+
+    return min(eligible, key=lambda candidate: abs(candidate - current))
+
+
+def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.05):
+    """Expand nearby edges to existing Backdrop coordinates when possible."""
+    left, top, width, height = geometry
+    right = left + width
+    bottom = top + height
+    selected_nodes = set(selected_nodes)
+    left_candidates = []
+    right_candidates = []
+    top_candidates = []
+    bottom_candidates = []
+
+    for backdrop in nuke.allNodes("BackdropNode"):
+        if backdrop in selected_nodes:
+            continue
+
+        other_left, other_top, other_right, other_bottom = _node_bounds(
+            backdrop
+        )
+        other_width = other_right - other_left
+        other_height = other_bottom - other_top
+        horizontal_tolerance = tolerance_ratio * max(width, other_width)
+        vertical_tolerance = tolerance_ratio * max(height, other_height)
+        left_candidates.append((other_left, horizontal_tolerance))
+        right_candidates.append((other_right, horizontal_tolerance))
+        top_candidates.append((other_top, vertical_tolerance))
+        bottom_candidates.append((other_bottom, vertical_tolerance))
+
+    aligned_left = _closest_outward_edge(left, left_candidates, -1)
+    aligned_right = _closest_outward_edge(right, right_candidates, 1)
+    aligned_top = _closest_outward_edge(top, top_candidates, -1)
+    aligned_bottom = _closest_outward_edge(bottom, bottom_candidates, 1)
+    return (
+        aligned_left,
+        aligned_top,
+        aligned_right - aligned_left,
+        aligned_bottom - aligned_top,
+    )
+
+
 def _next_backdrop_z_order():
     values = []
 
@@ -203,6 +258,18 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "the selected nodes."
         )
         form.addRow("Margin:", self.margin_field)
+
+        self.align_edges_checkbox = QtWidgets.QCheckBox(
+            "Align nearby backdrop edges"
+        )
+        self.align_edges_checkbox.setChecked(
+            _setting_bool("align_edges", True)
+        )
+        self.align_edges_checkbox.setToolTip(
+            "Expand edges to nearby backdrop coordinates within 5%. Edges "
+            "never move inward past the selected margin."
+        )
+        form.addRow("", self.align_edges_checkbox)
 
         self.text_size_combo = QtWidgets.QComboBox()
         for label, value in TEXT_SIZES:
@@ -316,6 +383,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
     def _accept(self):
         settings = _settings()
         settings.setValue("margin_factor", self.margin_field.value())
+        settings.setValue("align_edges", self.align_edges_checkbox.isChecked())
         settings.setValue("text_size", self.text_size_combo.currentData())
         settings.setValue("appearance", self.appearance_combo.currentText())
         settings.setValue("palette", self.palette_combo.currentText())
@@ -327,6 +395,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         return {
             "title": " ".join(self.title_field.text().split()),
             "margin_factor": float(self.margin_field.value()),
+            "align_edges": self.align_edges_checkbox.isChecked(),
             "font_size": int(self.text_size_combo.currentData()),
             "appearance": self.appearance_combo.currentText(),
             "rgb": self.selected_rgb(),
@@ -375,6 +444,12 @@ def create_backdrop():
         values["margin_factor"],
         values["font_size"]
     )
+
+    if values["align_edges"]:
+        xpos, ypos, width, height = _align_backdrop_geometry(
+            (xpos, ypos, width, height),
+            nodes
+        )
     undo = nuke.Undo()
     undo.begin("Create QTools Backdrop")
 
