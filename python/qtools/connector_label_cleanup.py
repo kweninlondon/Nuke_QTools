@@ -55,21 +55,24 @@ def _has_hidden_input(node):
 
 
 def _native_output_connectors():
-    """Return PostageStamps and hidden-input Dots labelled as To connectors."""
+    """Return PostageStamps and hidden-input output Dots.
+
+    Hidden Dots are included even when unlabeled or mistakenly labelled From,
+    allowing cleanup to derive the correct To label from their source Dot.
+    """
     connectors = list(nuke.allNodes("PostageStamp"))
 
     for dot in nuke.allNodes("Dot"):
         if "label" not in dot.knobs() or not _has_hidden_input(dot):
             continue
 
-        if _clean_text(dot["label"].value()).lower().startswith("to "):
-            connectors.append(dot)
+        connectors.append(dot)
 
     return connectors
 
 
 def _update_connector_colours_from_rules():
-    """Apply saved colours to every matching native connector group."""
+    """Apply rule colours, falling back to the connected From Dot colour."""
     changed_nodes = set()
     matched_nodes = set()
 
@@ -97,14 +100,22 @@ def _update_connector_colours_from_rules():
             source_name or connector_name
         )
 
-        if rule is None:
+        source_is_dot = source is not None and source.Class() == "Dot"
+
+        if rule is not None:
+            colour = int(rule["colour"])
+            targets = [connector]
+
+            if source_is_dot:
+                targets.append(source)
+        elif source_is_dot:
+            colour = connector_rules.node_colour(source)
+            targets = [connector]
+        else:
             continue
 
-        colour = int(rule["colour"])
-        targets = [connector]
-
-        if source is not None and source.Class() == "Dot":
-            targets.append(source)
+        if source_is_dot:
+            matched_nodes.add(source)
 
         for node in targets:
             matched_nodes.add(node)
@@ -377,16 +388,13 @@ def _collect_candidates():
             expected_colour = (
                 int(colour_rule["colour"])
                 if colour_rule is not None
-                else 0
+                else connector_rules.node_colour(dot)
             )
             colours_are_healthy = (
-                not expected_colour
-                or (
-                    connector_rules.node_colour(dot) == expected_colour
-                    and all(
-                        connector_rules.node_colour(stamp) == expected_colour
-                        for stamp, _name in connections
-                    )
+                connector_rules.node_colour(dot) == expected_colour
+                and all(
+                    connector_rules.node_colour(stamp) == expected_colour
+                    for stamp, _name in connections
                 )
             )
 
@@ -846,7 +854,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
         colour_layout.addWidget(edit_rules_button)
         update_colours_button = QtWidgets.QPushButton("Update colours")
         update_colours_button.setToolTip(
-            "Reapply saved colour rules to every matching connector group."
+            "Apply saved rules, or inherit the From Dot colour when no rule "
+            "matches."
         )
         colour_layout.addWidget(update_colours_button)
         colour_layout.addStretch()
@@ -1057,7 +1066,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         if not matched_count:
             nuke.message(
-                "No connector names match the current colour rules."
+                "No eligible connected From/To connector groups were found."
             )
             return
 
@@ -1806,12 +1815,14 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
                     _from_label(canonical_name)
                 )
                 colour_rule = connector_rules.rule_for_name(canonical_name)
-                colour = (
-                    int(colour_rule["colour"])
-                    if colour_rule is not None
-                    and self.recolour_checkbox.isChecked()
-                    else 0
-                )
+                if self.recolour_checkbox.isChecked():
+                    colour = (
+                        int(colour_rule["colour"])
+                        if colour_rule is not None
+                        else connector_rules.node_colour(candidate["dot"])
+                    )
+                else:
+                    colour = None
                 connector_rules.set_node_colour(candidate["dot"], colour)
 
                 for stamp, _stamp_name in candidate["connections"]:

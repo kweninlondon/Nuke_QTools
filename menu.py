@@ -37,6 +37,12 @@ qtools_menu.addCommand(
     "Alt+Y",
 )
 
+qtools_menu.addCommand(
+    "Create Backdrop",
+    "from qtools import create_backdrop; create_backdrop.create_backdrop()",
+    "Alt+Shift+B",
+)
+
 wired_copy_menu = qtools_menu.addMenu("Wired Copy")
 
 wired_copy_menu.addCommand(
