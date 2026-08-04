@@ -18,15 +18,24 @@ SETTING_RULES = "connector_rules_v1"
 DEFAULT_RULES = [
     {"search": "camera", "prefix": "CAMERA", "remove": "", "colour": 0x5F7F3FFF},
     {"search": "3d", "prefix": "3D", "remove": "", "colour": 0x5F7F3FFF},
-    {"search": "roto", "prefix": "ROTO", "remove": "_", "colour": 0x4F8F5FFF},
-    {"search": "bty, utils", "prefix": "CG", "remove": "_", "colour": 0},
+    {"search": "roto", "prefix": "ROTO", "remove": "", "colour": 0x4F8F5FFF},
+    {"search": "bty, utils", "prefix": "CG", "remove": "", "colour": 0},
     {"search": "dmp", "prefix": "DMP", "remove": "", "colour": 0},
-    {"search": "plate", "prefix": "PLATE", "remove": "_", "colour": 0},
+    {"search": "plate", "prefix": "PLATE", "remove": "", "colour": 0},
 ]
 
 
 def _settings():
     return QtCore.QSettings(SETTINGS_ORGANISATION, SETTINGS_APPLICATION)
+
+
+def _clean_remove_setting(value):
+    """Discard the obsolete standalone underscore-removal mask."""
+    return ", ".join(
+        part.strip()
+        for part in re.split(r"[,;|]+", str(value or ""))
+        if part.strip() and part.strip() != "_"
+    )
 
 
 def rules():
@@ -41,7 +50,7 @@ def rules():
                     {
                         "search": str(item.get("search", "")),
                         "prefix": str(item.get("prefix", "")).strip().upper(),
-                        "remove": str(item.get("remove", "")),
+                        "remove": _clean_remove_setting(item.get("remove", "")),
                         "colour": int(item.get("colour", 0)),
                     }
                     for item in saved
@@ -54,6 +63,10 @@ def rules():
 
 
 def save_rules(items):
+    items = [
+        dict(item, remove=_clean_remove_setting(item.get("remove", "")))
+        for item in items
+    ]
     settings = _settings()
     settings.setValue(SETTING_RULES, json.dumps(items))
     settings.sync()
@@ -119,9 +132,17 @@ def remove_patterns(value, patterns):
     return result
 
 
-def compose_name(prefix, name, remove_special=True, removals=""):
+def compose_name(
+    prefix,
+    name,
+    remove_special=True,
+    removals="",
+    replace_underscores=True
+):
     prefix = " ".join(str(prefix or "").split()).upper()
     name = remove_patterns(name, removals)
+    if replace_underscores:
+        name = str(name).replace("_", " ")
     name = clean_filename_text(name) if remove_special else " ".join(
         str(name or "").split()
     )

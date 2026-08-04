@@ -82,6 +82,8 @@ SETTING_SHOW_ONLY_FROM = "show_only_from_dots_v2"
 SETTING_SHOW = "show_sources"
 SETTING_CREATE_DOT = "create_dot_for_read"
 SETTING_FIX_DOT_NAME = "fix_dot_name"
+SETTING_USE_COLOUR = "create_dot_use_colour"
+SETTING_REPLACE_UNDERSCORES = "create_dot_replace_underscores"
 FROM_LABEL_WRAP_LENGTH = 20
 READ_DOT_SEARCH_DEPTH = 6
 READ_DOT_COLLISION_PADDING = 20
@@ -981,10 +983,11 @@ class DotNameDialog(QtWidgets.QDialog):
         prefix_layout.addWidget(QtWidgets.QLabel("Prefix:"))
         self.prefix_field = QtWidgets.QComboBox()
         self.prefix_field.setEditable(True)
+        self.prefix_field.addItem("None")
         self.prefix_field.addItems([
             rule["prefix"] for rule in connector_rules.rules()
         ])
-        self.prefix_field.setCurrentText("")
+        self.prefix_field.setCurrentText("None")
         self.prefix_field.setMinimumWidth(150)
         self.rules_button = QtWidgets.QPushButton("Edit rules...")
         prefix_layout.addWidget(self.prefix_field)
@@ -1008,11 +1011,23 @@ class DotNameDialog(QtWidgets.QDialog):
         layout.addLayout(name_layout)
 
         option_layout = QtWidgets.QHBoxLayout()
+        self.replace_underscores_checkbox = QtWidgets.QCheckBox(
+            "Replace _ with space"
+        )
+        self.replace_underscores_checkbox.setChecked(
+            _setting_bool(SETTING_REPLACE_UNDERSCORES, True)
+        )
+        self.replace_underscores_checkbox.setToolTip(
+            "Display underscores in the proposed connector name as spaces."
+        )
         self.use_colour_checkbox = QtWidgets.QCheckBox("Use colour")
-        self.use_colour_checkbox.setChecked(False)
+        self.use_colour_checkbox.setChecked(
+            _setting_bool(SETTING_USE_COLOUR, True)
+        )
         self.use_colour_checkbox.setToolTip(
             "Colour the Dot from its prefix rule; connected stamps inherit it."
         )
+        option_layout.addWidget(self.replace_underscores_checkbox)
         option_layout.addWidget(self.use_colour_checkbox)
         option_layout.addStretch()
         layout.addLayout(option_layout)
@@ -1033,7 +1048,10 @@ class DotNameDialog(QtWidgets.QDialog):
             self._use_frame_name
         )
         self.rules_button.clicked.connect(self._edit_rules)
-        buttons.accepted.connect(self.accept)
+        self.replace_underscores_checkbox.toggled.connect(
+            self._apply_rule_removals
+        )
+        buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
 
         self._auto_prefix()
@@ -1047,6 +1065,8 @@ class DotNameDialog(QtWidgets.QDialog):
         rule = connector_rules.matching_rule(frame_name)
         removals = rule.get("remove", "") if rule is not None else ""
         frame_name = connector_rules.remove_patterns(frame_name, removals)
+        if self.replace_underscores_checkbox.isChecked():
+            frame_name = frame_name.replace("_", " ")
         self.name_field.setText(frame_name)
 
     def _auto_prefix(self):
@@ -1058,38 +1078,64 @@ class DotNameDialog(QtWidgets.QDialog):
         if rule is not None:
             self.prefix_field.setCurrentText(rule["prefix"])
         else:
-            self.prefix_field.setCurrentText("")
+            self.prefix_field.setCurrentText("None")
 
     def _edit_rules(self):
         """Edit shared rules and refresh the available prefixes."""
         connector_rules.edit_rules(self)
         current = self.prefix_field.currentText()
         self.prefix_field.clear()
+        self.prefix_field.addItem("None")
         self.prefix_field.addItems([
             rule["prefix"] for rule in connector_rules.rules()
         ])
         self.prefix_field.setCurrentText(current)
         self._apply_rule_removals()
 
-    def _apply_rule_removals(self):
+    def _apply_rule_removals(self, _checked=None):
         """Apply the chosen prefix rule's masks to the visible proposal."""
-        rule = connector_rules.prefix_rule(self.prefix_field.currentText())
+        rule = connector_rules.prefix_rule(self._selected_prefix())
         removals = rule.get("remove", "") if rule is not None else ""
-        self.name_field.setText(
-            connector_rules.remove_patterns(self.name_field.text(), removals)
+        text = connector_rules.remove_patterns(
+            self.name_field.text(), removals
         )
+        if self.replace_underscores_checkbox.isChecked():
+            text = text.replace("_", " ")
+        self.name_field.setText(text)
+
+    def _selected_prefix(self):
+        """Return an empty prefix for the visible None option."""
+        prefix = _clean_text(self.prefix_field.currentText())
+        return "" if prefix.lower() == "none" else prefix
+
+    def _accept(self):
+        """Remember the colour preference after confirming creation."""
+        settings = _settings()
+        settings.setValue(
+            SETTING_USE_COLOUR,
+            self.use_colour_checkbox.isChecked()
+        )
+        settings.setValue(
+            SETTING_REPLACE_UNDERSCORES,
+            self.replace_underscores_checkbox.isChecked()
+        )
+        settings.sync()
+        self.accept()
 
     def dot_name(self):
         """Return the entered Dot label."""
         rule = connector_rules.prefix_rule(
-            self.prefix_field.currentText()
+            self._selected_prefix()
         )
         removals = rule.get("remove", "") if rule is not None else ""
         return connector_rules.compose_name(
-            self.prefix_field.currentText(),
+            self._selected_prefix(),
             self.name_field.text(),
             False,
-            removals=removals
+            removals=removals,
+            replace_underscores=(
+                self.replace_underscores_checkbox.isChecked()
+            )
         )
 
     def dot_colour(self):
@@ -1098,7 +1144,7 @@ class DotNameDialog(QtWidgets.QDialog):
             return 0
 
         rule = connector_rules.prefix_rule(
-            self.prefix_field.currentText()
+            self._selected_prefix()
         )
         return int(rule["colour"]) if rule is not None else 0
 
