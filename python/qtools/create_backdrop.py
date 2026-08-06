@@ -299,9 +299,10 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         palette_index = self.palette_combo.findText(saved_palette)
         self.palette_combo.setCurrentIndex(palette_index if palette_index >= 0 else 0)
         form.addRow("Colour palette:", self.palette_combo)
-        layout.addLayout(form)
 
-        colour_options = QtWidgets.QHBoxLayout()
+        colour_widget = QtWidgets.QWidget()
+        colour_options = QtWidgets.QHBoxLayout(colour_widget)
+        colour_options.setContentsMargins(0, 0, 0, 0)
         self.auto_colour_checkbox = QtWidgets.QCheckBox("Auto assign colour")
         self.auto_colour_checkbox.setChecked(
             _setting_bool("auto_colour", True)
@@ -312,19 +313,18 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         colour_options.addWidget(QtWidgets.QLabel("Result:"))
         colour_options.addWidget(self.auto_preview)
         colour_options.addStretch()
-        layout.addLayout(colour_options)
+        form.addRow("Colour:", colour_widget)
 
-        self.swatch_layout = QtWidgets.QHBoxLayout()
-        self.swatch_layout.addWidget(QtWidgets.QLabel("Manual colour:"))
+        swatch_widget = QtWidgets.QWidget()
+        self.swatch_layout = QtWidgets.QHBoxLayout(swatch_widget)
+        self.swatch_layout.setContentsMargins(0, 0, 0, 0)
         self._swatch_buttons = []
-        layout.addLayout(self.swatch_layout)
+        form.addRow("Manual:", swatch_widget)
 
-        geometry_form = QtWidgets.QFormLayout()
         self.margin_field = QtWidgets.QDoubleSpinBox()
         self.margin_field.setRange(0.0, 5.0)
         self.margin_field.setSingleStep(0.25)
         self.margin_field.setDecimals(2)
-        self.margin_field.setSuffix(" × node")
         self.margin_field.setValue(
             float(_settings().value("margin_factor", 1.0))
         )
@@ -332,7 +332,13 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "Spacing on every side. 1.0 equals the representative width of "
             "the selected nodes."
         )
-        geometry_form.addRow("Margin:", self.margin_field)
+        margin_widget = QtWidgets.QWidget()
+        margin_layout = QtWidgets.QHBoxLayout(margin_widget)
+        margin_layout.setContentsMargins(0, 0, 0, 0)
+        margin_layout.addWidget(self.margin_field)
+        margin_layout.addWidget(QtWidgets.QLabel("× node"))
+        margin_layout.addStretch()
+        form.addRow("Margin:", margin_widget)
 
         self.align_edges_checkbox = QtWidgets.QCheckBox(
             "Align nearby backdrop edges"
@@ -344,8 +350,8 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "Expand edges to nearby backdrop coordinates within 50%. Edges "
             "never move inward past the selected margin."
         )
-        geometry_form.addRow("Align:", self.align_edges_checkbox)
-        layout.addLayout(geometry_form)
+        form.addRow("Align:", self.align_edges_checkbox)
+        layout.addLayout(form)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -383,8 +389,8 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._influence_backdrop = nuke.nodes.BackdropNode(
                 label="Zone of influence (50%)",
                 tile_color=0x808080FF,
-                note_font_color=0x808080FF,
-                note_font_size=18,
+                note_font_color=0xFFFFFFFF,
+                note_font_size=50,
                 z_order=z_order - 1,
             )
             self._preview_backdrop = nuke.nodes.BackdropNode(
