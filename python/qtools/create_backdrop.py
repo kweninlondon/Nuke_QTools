@@ -16,6 +16,7 @@ SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "CreateBackdrop"
 
 TEXT_SIZES = [
+    ("Huge (200 px)", 200),
     ("Big", 50),
     ("Medium", 32),
     ("Small", 20),
@@ -179,7 +180,7 @@ def _closest_outward_edge(current, candidates, direction):
     return min(eligible, key=lambda candidate: abs(candidate - current))
 
 
-def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.05):
+def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
     """Expand nearby edges to existing Backdrop coordinates when possible."""
     left, top, width, height = geometry
     right = left + width
@@ -266,7 +267,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             _setting_bool("align_edges", True)
         )
         self.align_edges_checkbox.setToolTip(
-            "Expand edges to nearby backdrop coordinates within 5%. Edges "
+            "Expand edges to nearby backdrop coordinates within 50%. Edges "
             "never move inward past the selected margin."
         )
         form.addRow("", self.align_edges_checkbox)
@@ -278,6 +279,13 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         size_index = self.text_size_combo.findData(saved_text_size)
         self.text_size_combo.setCurrentIndex(size_index if size_index >= 0 else 0)
         form.addRow("Text:", self.text_size_combo)
+
+        self.bold_checkbox = QtWidgets.QCheckBox("Bold")
+        self.bold_checkbox.setChecked(_setting_bool("bold", False))
+        self.bold_checkbox.setToolTip(
+            "Use the bold variant of Nuke's backdrop font."
+        )
+        form.addRow("", self.bold_checkbox)
 
         self.appearance_combo = QtWidgets.QComboBox()
         self.appearance_combo.addItems(["Fill", "Border"])
@@ -385,6 +393,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         settings.setValue("margin_factor", self.margin_field.value())
         settings.setValue("align_edges", self.align_edges_checkbox.isChecked())
         settings.setValue("text_size", self.text_size_combo.currentData())
+        settings.setValue("bold", self.bold_checkbox.isChecked())
         settings.setValue("appearance", self.appearance_combo.currentText())
         settings.setValue("palette", self.palette_combo.currentText())
         settings.setValue("auto_colour", self.auto_colour_checkbox.isChecked())
@@ -397,6 +406,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "margin_factor": float(self.margin_field.value()),
             "align_edges": self.align_edges_checkbox.isChecked(),
             "font_size": int(self.text_size_combo.currentData()),
+            "bold": self.bold_checkbox.isChecked(),
             "appearance": self.appearance_combo.currentText(),
             "rgb": self.selected_rgb(),
         }
@@ -468,6 +478,14 @@ def create_backdrop():
 
         if "appearance" in backdrop.knobs():
             backdrop["appearance"].setValue(values["appearance"])
+
+        if values["bold"] and "note_font" in backdrop.knobs():
+            font_name = str(backdrop["note_font"].value() or "")
+
+            if "bold" not in font_name.lower():
+                backdrop["note_font"].setValue(
+                    "{} Bold".format(font_name).strip()
+                )
 
         if "border_width" in backdrop.knobs():
             backdrop["border_width"].setValue(
