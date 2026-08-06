@@ -16,7 +16,7 @@ SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "CreateBackdrop"
 
 TEXT_SIZES = [
-    ("Huge (200 px)", 200),
+    ("Huge", 200),
     ("Big", 50),
     ("Medium", 32),
     ("Small", 20),
@@ -198,10 +198,8 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
         other_left, other_top, other_right, other_bottom = _node_bounds(
             backdrop
         )
-        other_width = other_right - other_left
-        other_height = other_bottom - other_top
-        horizontal_tolerance = tolerance_ratio * max(width, other_width)
-        vertical_tolerance = tolerance_ratio * max(height, other_height)
+        horizontal_tolerance = tolerance_ratio * width
+        vertical_tolerance = tolerance_ratio * height
         left_candidates.append((other_left, horizontal_tolerance))
         right_candidates.append((other_right, horizontal_tolerance))
         top_candidates.append((other_top, vertical_tolerance))
@@ -234,9 +232,15 @@ def _next_backdrop_z_order():
 class CreateBackdropDialog(QtWidgets.QDialog):
     """Collect backdrop title, layout, typography and colour choices."""
 
-    def __init__(self, parent=None):
+    def __init__(self, nodes, parent=None):
         super(CreateBackdropDialog, self).__init__(parent)
+        self._nodes = list(nodes)
         self._manual_rgb = (58, 132, 134)
+        self._preview_backdrop = None
+        self._influence_backdrop = None
+        self._preview_font_name = ""
+        self._preview_ready = False
+        self._undo_disabled = False
         self.setWindowTitle("Create backdrop")
         self.setMinimumWidth(520)
         layout = QtWidgets.QVBoxLayout(self)
@@ -331,12 +335,161 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self.palette_combo.currentTextChanged.connect(self._rebuild_swatches)
         self.title_field.textChanged.connect(self._update_colour_preview)
         self.auto_colour_checkbox.toggled.connect(self._auto_colour_toggled)
+        self.margin_field.valueChanged.connect(self._update_graph_preview)
+        self.align_edges_checkbox.toggled.connect(self._update_graph_preview)
+        self.text_size_combo.currentIndexChanged.connect(
+            self._update_graph_preview
+        )
+        self.bold_checkbox.toggled.connect(self._update_graph_preview)
+        self.appearance_combo.currentTextChanged.connect(
+            self._update_graph_preview
+        )
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
 
         self._rebuild_swatches()
         self._auto_colour_toggled(self.auto_colour_checkbox.isChecked())
+        self._start_graph_preview()
         self.title_field.setFocus()
+
+    def _start_graph_preview(self):
+        """Create temporary graph nodes while preventing undo-stack noise."""
+        try:
+            nuke.Undo.disable()
+            self._undo_disabled = True
+            z_order = _next_backdrop_z_order()
+            self._influence_backdrop = nuke.nodes.BackdropNode(
+                label="Alignment influence (50%)",
+                tile_color=0xFFFFFFFF,
+                note_font_color=0xFFFFFFFF,
+                note_font_size=18,
+                z_order=z_order - 1,
+            )
+            self._preview_backdrop = nuke.nodes.BackdropNode(
+                z_order=z_order,
+            )
+            if "note_font" in self._preview_backdrop.knobs():
+                self._preview_font_name = str(
+                    self._preview_backdrop["note_font"].value() or ""
+                )
+
+            if "appearance" in self._influence_backdrop.knobs():
+                self._influence_backdrop["appearance"].setValue("Border")
+            if "border_width" in self._influence_backdrop.knobs():
+                self._influence_backdrop["border_width"].setValue(3)
+
+            self._preview_ready = True
+            self._update_graph_preview()
+
+            for node in self._nodes:
+                node.setSelected(True)
+            self._preview_backdrop.setSelected(False)
+            self._influence_backdrop.setSelected(False)
+        except Exception:
+            self.cleanup_graph_preview()
+
+    def cleanup_graph_preview(self):
+        """Remove temporary graph nodes and restore normal undo recording."""
+        self._preview_ready = False
+
+        for node in (self._preview_backdrop, self._influence_backdrop):
+            if node is None:
+                continue
+            try:
+                nuke.delete(node)
+            except Exception:
+                pass
+
+        self._preview_backdrop = None
+        self._influence_backdrop = None
+
+        if self._undo_disabled:
+            try:
+                nuke.Undo.enable()
+            except Exception:
+                pass
+            self._undo_disabled = False
+
+        for node in self._nodes:
+            try:
+                node.setSelected(True)
+            except Exception:
+                pass
+
+    def _preview_geometries(self):
+        values = self.values()
+        base = _backdrop_geometry(
+            self._nodes,
+            values["margin_factor"],
+            values["font_size"]
+        )
+        left, top, width, height = base
+        influence = (
+            left - width * 0.5,
+            top - height * 0.5,
+            width * 2.0,
+            height * 2.0,
+        )
+        aligned = base
+
+        if values["align_edges"]:
+            aligned = _align_backdrop_geometry(
+                base,
+                self._nodes + [
+                    self._preview_backdrop,
+                    self._influence_backdrop,
+                ]
+            )
+
+        return values, aligned, influence
+
+    def _set_preview_geometry(self, node, geometry):
+        left, top, width, height = geometry
+        node.setXYpos(int(round(left)), int(round(top)))
+        node["bdwidth"].setValue(int(round(width)))
+        node["bdheight"].setValue(int(round(height)))
+
+    def _update_graph_preview(self, _value=None):
+        """Refresh both temporary Backdrops from the current controls."""
+        if not self._preview_ready:
+            return
+
+        values, preview_geometry, influence_geometry = self._preview_geometries()
+        preview = self._preview_backdrop
+        preview["label"].setValue(values["title"] or "Backdrop preview")
+        preview["note_font_size"].setValue(values["font_size"])
+        preview["tile_color"].setValue(_packed_colour(values["rgb"]))
+        preview["note_font_color"].setValue(
+            _contrast_colour(values["rgb"])
+        )
+
+        if "appearance" in preview.knobs():
+            preview["appearance"].setValue(values["appearance"])
+        if "border_width" in preview.knobs():
+            preview["border_width"].setValue(
+                4 if values["appearance"] == "Border" else 2
+            )
+        if "note_font" in preview.knobs():
+            font_name = self._preview_font_name
+            if values["bold"] and "bold" not in font_name.lower():
+                font_name = "{} Bold".format(font_name).strip()
+            preview["note_font"].setValue(font_name)
+
+        self._set_preview_geometry(preview, preview_geometry)
+
+        if values["align_edges"]:
+            self._set_preview_geometry(
+                self._influence_backdrop,
+                influence_geometry
+            )
+        else:
+            self._set_preview_geometry(
+                self._influence_backdrop,
+                (1000000000, 1000000000, 1, 1)
+            )
+
+        preview.setSelected(False)
+        self._influence_backdrop.setSelected(False)
 
     def _rebuild_swatches(self, _palette=None):
         while self._swatch_buttons:
@@ -387,6 +540,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 *rgb
             )
         )
+        self._update_graph_preview()
 
     def _accept(self):
         settings = _settings()
@@ -443,12 +597,16 @@ def create_backdrop():
         nuke.message("Select at least one node to create a backdrop.")
         return None
 
-    dialog = CreateBackdropDialog(parent=_nuke_main_window())
+    dialog = CreateBackdropDialog(nodes, parent=_nuke_main_window())
 
-    if dialog.exec() != QtWidgets.QDialog.Accepted:
+    try:
+        result = dialog.exec()
+        values = dialog.values() if result == QtWidgets.QDialog.Accepted else None
+    finally:
+        dialog.cleanup_graph_preview()
+
+    if values is None:
         return None
-
-    values = dialog.values()
     xpos, ypos, width, height = _backdrop_geometry(
         nodes,
         values["margin_factor"],
@@ -491,6 +649,13 @@ def create_backdrop():
             backdrop["border_width"].setValue(
                 4 if values["appearance"] == "Border" else 2
             )
+
+        # Some Nuke versions adjust Backdrop geometry while appearance/font
+        # knobs are changing. Reapply the computed graph coordinates last so
+        # accepted edge alignments remain exact.
+        backdrop.setXYpos(int(xpos), int(ypos))
+        backdrop["bdwidth"].setValue(int(width))
+        backdrop["bdheight"].setValue(int(height))
 
         for node in nuke.selectedNodes():
             node.setSelected(False)
