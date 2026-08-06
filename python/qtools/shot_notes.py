@@ -146,6 +146,7 @@ class NoteRow(QtWidgets.QWidget):
     """One checkable note with a compact remove button."""
 
     changed = QtCore.Signal()
+    edit_requested = QtCore.Signal(str)
     remove_requested = QtCore.Signal(str)
 
     def __init__(self, note, parent=None):
@@ -156,10 +157,29 @@ class NoteRow(QtWidgets.QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(6)
 
-        self.checkbox = QtWidgets.QCheckBox(note["text"])
+        self.checkbox = QtWidgets.QCheckBox()
         self.checkbox.setChecked(bool(note.get("done", False)))
         self.checkbox.setToolTip(_note_tooltip(note))
-        layout.addWidget(self.checkbox, 1)
+        layout.addWidget(self.checkbox)
+
+        self.text_label = QtWidgets.QLabel(note["text"])
+        self.text_label.setWordWrap(True)
+        self.text_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.text_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
+        self.text_label.setToolTip(_note_tooltip(note))
+        self.text_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred
+        )
+        layout.addWidget(self.text_label, 1)
+
+        edit_button = QtWidgets.QToolButton()
+        edit_button.setText("Edit")
+        edit_button.setToolTip("Edit this note")
+        edit_button.setAutoRaise(True)
+        layout.addWidget(edit_button)
 
         remove_button = QtWidgets.QToolButton()
         remove_button.setText("×")
@@ -167,10 +187,36 @@ class NoteRow(QtWidgets.QWidget):
         remove_button.setAutoRaise(True)
         layout.addWidget(remove_button)
 
-        self.checkbox.toggled.connect(self.changed)
+        self.checkbox.toggled.connect(self._checked_changed)
+        edit_button.clicked.connect(
+            lambda: self.edit_requested.emit(self.note_id)
+        )
         remove_button.clicked.connect(
             lambda: self.remove_requested.emit(self.note_id)
         )
+        self._update_done_style()
+
+    def _checked_changed(self):
+        self._update_done_style()
+        self.changed.emit()
+
+    def _update_done_style(self):
+        font = self.text_label.font()
+        font.setStrikeOut(self.checkbox.isChecked())
+        self.text_label.setFont(font)
+
+    def row_size_hint(self, width):
+        """Return a row height that accommodates the wrapped note text."""
+        layout = self.layout()
+        available = max(80, int(width) - 105)
+        text_height = self.text_label.heightForWidth(available)
+        control_height = max(
+            layout.itemAt(index).widget().sizeHint().height()
+            for index in range(layout.count())
+            if layout.itemAt(index).widget() is not None
+        )
+        height = max(text_height, control_height) + 8
+        return QtCore.QSize(max(0, int(width)), int(height))
 
 
 class ShotNotesWidget(QtWidgets.QWidget):
@@ -181,6 +227,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self._path = ""
         self._data = _empty_data()
         self._rows = {}
+        self._row_items = {}
 
         self._build_ui()
         self._switch_folder(force=True)
@@ -272,6 +319,9 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self.notes_list.setSelectionMode(
             QtWidgets.QAbstractItemView.NoSelection
         )
+        self.notes_list.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff
+        )
         layout.addWidget(self.notes_list, 1)
 
         actions = QtWidgets.QHBoxLayout()
@@ -302,6 +352,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
         self.archives.setHeaderHidden(True)
         self.archives.setRootIsDecorated(True)
         self.archives.setAlternatingRowColors(True)
+        self.archives.setWordWrap(True)
         archive_header = self.archives.header()
         archive_header.setStretchLastSection(False)
         archive_header.setSectionResizeMode(
@@ -349,6 +400,7 @@ class ShotNotesWidget(QtWidgets.QWidget):
         """Rebuild the visible checklist and archive history."""
         self.notes_list.clear()
         self._rows = {}
+        self._row_items = {}
 
         for note in self._data["notes"]:
             if "id" not in note:
@@ -356,12 +408,15 @@ class ShotNotesWidget(QtWidgets.QWidget):
 
             item = QtWidgets.QListWidgetItem()
             row = NoteRow(note, self.notes_list)
-            item.setSizeHint(row.sizeHint())
             self.notes_list.addItem(item)
             self.notes_list.setItemWidget(item, row)
             self._rows[note["id"]] = row
+            self._row_items[note["id"]] = item
             row.changed.connect(self._note_state_changed)
+            row.edit_requested.connect(self._edit_note)
             row.remove_requested.connect(self._remove_note)
+
+        self._update_note_row_sizes()
 
         self.archives.clear()
 
@@ -454,6 +509,23 @@ class ShotNotesWidget(QtWidgets.QWidget):
         """Persist the current folder's notes."""
         _save_data(self._path, self._data)
 
+    def resizeEvent(self, event):
+        super(ShotNotesWidget, self).resizeEvent(event)
+        QtCore.QTimer.singleShot(0, self._update_note_row_sizes)
+
+    def _update_note_row_sizes(self):
+        """Resize checklist rows when wrapping changes with panel width."""
+        if not hasattr(self, "notes_list"):
+            return
+
+        width = max(120, self.notes_list.viewport().width() - 6)
+
+        for note_id, row in self._rows.items():
+            item = self._row_items.get(note_id)
+
+            if item is not None:
+                item.setSizeHint(row.row_size_hint(width))
+
     def _add_single_note(self):
         """Add the always-visible single-line note when Enter is pressed."""
         if not self._path:
@@ -527,10 +599,45 @@ class ShotNotesWidget(QtWidgets.QWidget):
                     note.pop("script", None)
                     note.pop("completed_date", None)
 
-                row.checkbox.setToolTip(_note_tooltip(note))
+                tooltip = _note_tooltip(note)
+                row.checkbox.setToolTip(tooltip)
+                row.text_label.setToolTip(tooltip)
 
         self._save()
         self._update_action_buttons()
+
+    def _edit_note(self, note_id):
+        """Edit an existing active note without changing its lifecycle data."""
+        note = next(
+            (
+                candidate for candidate in self._data["notes"]
+                if candidate.get("id") == note_id
+            ),
+            None
+        )
+
+        if note is None:
+            return
+
+        text, accepted = QtWidgets.QInputDialog.getMultiLineText(
+            self,
+            "Edit note",
+            "Note:",
+            note.get("text", "")
+        )
+
+        if not accepted:
+            return
+
+        text = " ".join(str(text or "").split())
+
+        if not text:
+            nuke.message("A note cannot be empty.")
+            return
+
+        note["text"] = text
+        self._save()
+        self._refresh()
 
     def _remove_note(self, note_id):
         """Delete one checklist item."""
