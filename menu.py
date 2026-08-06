@@ -19,6 +19,7 @@ nodes_qtools_menu.addCommand(
 )
 
 from qtools import shot_notes
+from qtools import teleport_settings
 from qtools import wired_copy
 
 
@@ -61,6 +62,43 @@ wired_copy_menu.addCommand(
     "Duplicate with Inputs",
     "from qtools import wired_copy; wired_copy.duplicate_with_inputs()",
     "Ctrl+Shift+D",
+)
+
+teleport_menu = qtools_menu.addMenu("Teleport")
+
+teleport_menu.addCommand(
+    "Telecopy",
+    "from qtools import teleport; teleport.telecopy()",
+    teleport_settings.SHORTCUT_COPY,
+)
+
+teleport_menu.addCommand(
+    "Telepaste",
+    "from qtools import teleport; teleport.telepaste_ui()",
+    teleport_settings.SHORTCUT_PASTE,
+)
+
+teleport_menu.addCommand(
+    "Telepaste Latest",
+    "from qtools import teleport; teleport.telepaste_ui(latest=True)",
+    teleport_settings.SHORTCUT_PASTE_LATEST,
+)
+
+teleport_menu.addSeparator()
+
+teleport_menu.addCommand(
+    "Delete My Teleport",
+    "from qtools import teleport; teleport.manage(own_only=True)",
+)
+
+teleport_menu.addCommand(
+    "Manage All Teleports",
+    "from qtools import teleport; teleport.manage()",
+)
+
+teleport_menu.addCommand(
+    "Explore Shared Folder",
+    "from qtools import teleport; teleport.explore()",
 )
 
 utilities_menu = qtools_menu.addMenu("Utilities")

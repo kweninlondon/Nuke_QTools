@@ -37,6 +37,24 @@ those calls with:
 nuke.createNode("CGTOFILM")
 ```
 
+## Teleport
+
+Teleport shares selected nodes between artists using a common folder. Its
+commands are available under **QTools > Teleport**.
+
+Before sharing across workstations, edit
+`python/qtools/teleport_settings.py` and set `SHARED_PATH` to a folder every
+participating artist can read and write. Alternatively, define the
+`TELEPORT_SHARED_PATH` environment variable. The default
+`~/teleport_shared` location is suitable for local testing only.
+
+- **Telecopy** saves the selected non-Viewer nodes for the current artist.
+- **Telepaste** selects an artist's stored nodes and pastes them.
+- **Telepaste Latest** pastes the most recently updated teleport.
+
+Teleport transfers node definitions only. Referenced media, gizmos, fonts,
+and plug-ins must also be available to the receiving artist.
+
 ## Everyday Git workflow
 
 1. Edit and test a tool.
