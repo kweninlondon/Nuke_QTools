@@ -185,6 +185,12 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
     left, top, width, height = geometry
     right = left + width
     bottom = top + height
+    horizontal_tolerance = tolerance_ratio * width
+    vertical_tolerance = tolerance_ratio * height
+    influence_left = left - horizontal_tolerance
+    influence_right = right + horizontal_tolerance
+    influence_top = top - vertical_tolerance
+    influence_bottom = bottom + vertical_tolerance
     selected_nodes = set(selected_nodes)
     left_candidates = []
     right_candidates = []
@@ -198,8 +204,17 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
         other_left, other_top, other_right, other_bottom = _node_bounds(
             backdrop
         )
-        horizontal_tolerance = tolerance_ratio * width
-        vertical_tolerance = tolerance_ratio * height
+
+        intersects_influence = not (
+            other_right < influence_left
+            or other_left > influence_right
+            or other_bottom < influence_top
+            or other_top > influence_bottom
+        )
+
+        if not intersects_influence:
+            continue
+
         left_candidates.append((other_left, horizontal_tolerance))
         right_candidates.append((other_right, horizontal_tolerance))
         top_candidates.append((other_top, vertical_tolerance))
@@ -250,46 +265,24 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self.title_field.setPlaceholderText("Enter backdrop title...")
         form.addRow("Title:", self.title_field)
 
-        self.margin_field = QtWidgets.QDoubleSpinBox()
-        self.margin_field.setRange(0.0, 5.0)
-        self.margin_field.setSingleStep(0.25)
-        self.margin_field.setDecimals(2)
-        self.margin_field.setSuffix(" × node")
-        self.margin_field.setValue(
-            float(_settings().value("margin_factor", 1.0))
-        )
-        self.margin_field.setToolTip(
-            "Spacing on every side. 1.0 equals the representative width of "
-            "the selected nodes."
-        )
-        form.addRow("Margin:", self.margin_field)
-
-        self.align_edges_checkbox = QtWidgets.QCheckBox(
-            "Align nearby backdrop edges"
-        )
-        self.align_edges_checkbox.setChecked(
-            _setting_bool("align_edges", True)
-        )
-        self.align_edges_checkbox.setToolTip(
-            "Expand edges to nearby backdrop coordinates within 50%. Edges "
-            "never move inward past the selected margin."
-        )
-        form.addRow("", self.align_edges_checkbox)
-
         self.text_size_combo = QtWidgets.QComboBox()
         for label, value in TEXT_SIZES:
             self.text_size_combo.addItem(label, value)
         saved_text_size = int(_settings().value("text_size", 50))
         size_index = self.text_size_combo.findData(saved_text_size)
         self.text_size_combo.setCurrentIndex(size_index if size_index >= 0 else 0)
-        form.addRow("Text:", self.text_size_combo)
-
         self.bold_checkbox = QtWidgets.QCheckBox("Bold")
         self.bold_checkbox.setChecked(_setting_bool("bold", False))
         self.bold_checkbox.setToolTip(
             "Use the bold variant of Nuke's backdrop font."
         )
-        form.addRow("", self.bold_checkbox)
+        text_widget = QtWidgets.QWidget()
+        text_layout = QtWidgets.QHBoxLayout(text_widget)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.addWidget(self.text_size_combo)
+        text_layout.addWidget(self.bold_checkbox)
+        text_layout.addStretch()
+        form.addRow("Text:", text_widget)
 
         self.appearance_combo = QtWidgets.QComboBox()
         self.appearance_combo.addItems(["Fill", "Border"])
@@ -326,6 +319,34 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._swatch_buttons = []
         layout.addLayout(self.swatch_layout)
 
+        geometry_form = QtWidgets.QFormLayout()
+        self.margin_field = QtWidgets.QDoubleSpinBox()
+        self.margin_field.setRange(0.0, 5.0)
+        self.margin_field.setSingleStep(0.25)
+        self.margin_field.setDecimals(2)
+        self.margin_field.setSuffix(" × node")
+        self.margin_field.setValue(
+            float(_settings().value("margin_factor", 1.0))
+        )
+        self.margin_field.setToolTip(
+            "Spacing on every side. 1.0 equals the representative width of "
+            "the selected nodes."
+        )
+        geometry_form.addRow("Margin:", self.margin_field)
+
+        self.align_edges_checkbox = QtWidgets.QCheckBox(
+            "Align nearby backdrop edges"
+        )
+        self.align_edges_checkbox.setChecked(
+            _setting_bool("align_edges", True)
+        )
+        self.align_edges_checkbox.setToolTip(
+            "Expand edges to nearby backdrop coordinates within 50%. Edges "
+            "never move inward past the selected margin."
+        )
+        geometry_form.addRow("Align:", self.align_edges_checkbox)
+        layout.addLayout(geometry_form)
+
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
@@ -350,6 +371,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._rebuild_swatches()
         self._auto_colour_toggled(self.auto_colour_checkbox.isChecked())
         self._start_graph_preview()
+        QtCore.QTimer.singleShot(0, self._update_graph_preview)
         self.title_field.setFocus()
 
     def _start_graph_preview(self):
@@ -359,9 +381,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._undo_disabled = True
             z_order = _next_backdrop_z_order()
             self._influence_backdrop = nuke.nodes.BackdropNode(
-                label="Alignment influence (50%)",
-                tile_color=0xFFFFFFFF,
-                note_font_color=0xFFFFFFFF,
+                label="Zone of influence (50%)",
+                tile_color=0x808080FF,
+                note_font_color=0x808080FF,
                 note_font_size=18,
                 z_order=z_order - 1,
             )
