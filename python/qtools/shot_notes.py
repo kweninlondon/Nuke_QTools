@@ -142,6 +142,32 @@ def _save_data(path, data):
     return True
 
 
+class NoteEditDialog(QtWidgets.QDialog):
+    """Comfortable multiline editor for one existing note."""
+
+    def __init__(self, text, parent=None):
+        super(NoteEditDialog, self).__init__(parent)
+        self.setWindowTitle("Edit note")
+        self.resize(700, 360)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel("Note:"))
+        self.editor = QtWidgets.QPlainTextEdit(text)
+        self.editor.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        layout.addWidget(self.editor, 1)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save
+            | QtWidgets.QDialogButtonBox.Cancel
+        )
+        layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.editor.selectAll()
+        self.editor.setFocus()
+
+    def text(self):
+        return self.editor.toPlainText()
+
+
 class NoteRow(QtWidgets.QWidget):
     """One checkable note with a compact remove button."""
 
@@ -202,8 +228,11 @@ class NoteRow(QtWidgets.QWidget):
 
     def _update_done_style(self):
         font = self.text_label.font()
-        font.setStrikeOut(self.checkbox.isChecked())
+        font.setStrikeOut(False)
         self.text_label.setFont(font)
+        self.text_label.setStyleSheet(
+            "color: #888888;" if self.checkbox.isChecked() else ""
+        )
 
     def row_size_hint(self, width):
         """Return a row height that accommodates the wrapped note text."""
@@ -619,17 +648,15 @@ class ShotNotesWidget(QtWidgets.QWidget):
         if note is None:
             return
 
-        text, accepted = QtWidgets.QInputDialog.getMultiLineText(
-            self,
-            "Edit note",
-            "Note:",
-            note.get("text", "")
+        dialog = NoteEditDialog(
+            note.get("text", ""),
+            parent=self
         )
 
-        if not accepted:
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
 
-        text = " ".join(str(text or "").split())
+        text = " ".join(str(dialog.text() or "").split())
 
         if not text:
             nuke.message("A note cannot be empty.")

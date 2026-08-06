@@ -76,6 +76,29 @@ def _update_connector_colours_from_rules():
     changed_nodes = set()
     matched_nodes = set()
 
+    # Source Dots must be handled independently: a valid From Dot may not have
+    # any PostageStamp or hidden To Dot connected to it yet.
+    for dot in nuke.allNodes("Dot"):
+        if "label" not in dot.knobs():
+            continue
+
+        label = _clean_text(dot["label"].value())
+
+        if not label.lower().startswith("from "):
+            continue
+
+        rule = connector_rules.rule_for_name(_connector_name(label))
+
+        if rule is None:
+            continue
+
+        colour = int(rule["colour"])
+        matched_nodes.add(dot)
+
+        if connector_rules.node_colour(dot) != colour:
+            connector_rules.set_node_colour(dot, colour)
+            changed_nodes.add(dot)
+
     for connector in _native_output_connectors():
         try:
             source = connector.input(0)
@@ -1066,7 +1089,7 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         if not matched_count:
             nuke.message(
-                "No eligible connected From/To connector groups were found."
+                "No eligible From/To connector nodes were found."
             )
             return
 
