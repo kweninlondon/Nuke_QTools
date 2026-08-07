@@ -7,7 +7,8 @@ A collection of Python scripts, gizmos, and utilities for Foundry Nuke.
 - `init.py` adds the toolkit folders to Nuke's plug-in path.
 - `menu.py` builds the QTools menu in Nuke.
 - `python/qtools/` contains reusable Python modules.
-- `gizmos/` contains `.gizmo` files.
+- `gizmos/` contains reusable `.gizmo` files.
+- `groups/` contains self-contained node groups pasted by QTools commands.
 - `icons/` contains menu and toolbar artwork.
 
 ## Install in Nuke on macOS
@@ -24,18 +25,12 @@ main Nuke menu bar.
 
 ## Install CG To Film
 
-The gizmo is included as `gizmos/CGTOFILM.gizmo`; no separate installation is
-needed when QTools is installed. Restart Nuke, then use **QTools > Gizmos >
-CG To Film**, or press Tab and type `CGTOFILM`.
+CG To Film is bundled as `groups/CGTOFILM.nk`. Restart Nuke, then use either
+**QTools > Groups > CG To Film** or **Nodes > QTools > CG To Film**.
 
-Keep the installed filename unversioned. Names such as
-`CGTOFILM1.0.4.gizmo` make Nuke derive an unreliable command name, and old
-menu entries that call `CGTOFILM1.0` will show **Unknown Command**. Replace
-those calls with:
-
-```python
-nuke.createNode("CGTOFILM")
-```
+The command pastes a Group node whose complete internal node graph is stored
+in the current Nuke script. Scripts created this way do not require the
+original QTools asset to reopen CG To Film correctly.
 
 ## Teleport
 

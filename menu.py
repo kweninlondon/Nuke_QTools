@@ -4,18 +4,18 @@ import nuke
 
 qtools_menu = nuke.menu("Nuke").addMenu("QTools")
 
-gizmos_menu = qtools_menu.addMenu("Gizmos")
+groups_menu = qtools_menu.addMenu("Groups")
 
-gizmos_menu.addCommand(
+groups_menu.addCommand(
     "CG To Film",
-    "nuke.createNode('CGTOFILM')",
+    "from qtools import cg_to_film; cg_to_film.create_group()",
 )
 
 nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools")
 
 nodes_qtools_menu.addCommand(
     "CG To Film",
-    "nuke.createNode('CGTOFILM')",
+    "from qtools import cg_to_film; cg_to_film.create_group()",
 )
 
 from qtools import shot_notes
