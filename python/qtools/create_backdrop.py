@@ -1,7 +1,9 @@
 """Create consistently styled Nuke backdrops around selected nodes."""
 
 import colorsys
+import difflib
 import hashlib
+import json
 import re
 
 import nuke
@@ -29,6 +31,13 @@ PALETTES = {
     "Dark": (0.48, 0.36),
 }
 PALETTE_ORDER = ["Balanced", "Pastel", "Vivid", "Muted", "Dark"]
+COLOUR_METHODS = [
+    ("Hash - Distinct", "hash"),
+    ("Text similarity - Related", "similarity"),
+]
+FAMILY_ROOT_KNOB = "qtools_backdrop_families"
+FAMILY_NODE_KNOB = "qtools_colour_family"
+FAMILY_COLOUR_KNOB = "qtools_family_colour"
 
 # Familiar departments retain intuitive base families. All other first words
 # are assigned a stable hue from their text.
@@ -109,6 +118,159 @@ def _palette_swatches(palette_name):
 def _packed_colour(rgb):
     red, green, blue = rgb
     return (red << 24) | (green << 16) | (blue << 8) | 0xFF
+
+
+def _unpacked_colour(value):
+    value = int(value)
+    return (value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF
+
+
+def _family_registry():
+    """Read per-script family colours, recovering copied backdrop metadata."""
+    families = {}
+    root = nuke.root()
+
+    if FAMILY_ROOT_KNOB in root.knobs():
+        try:
+            payload = json.loads(str(root[FAMILY_ROOT_KNOB].value() or "{}"))
+            families.update(payload.get("families", payload))
+        except (TypeError, ValueError):
+            pass
+
+    for backdrop in nuke.allNodes("BackdropNode"):
+        knobs = backdrop.knobs()
+
+        if FAMILY_NODE_KNOB not in knobs or FAMILY_COLOUR_KNOB not in knobs:
+            continue
+
+        family = _normalise_title(backdrop[FAMILY_NODE_KNOB].value())
+
+        if family and family not in families:
+            try:
+                families[family] = int(backdrop[FAMILY_COLOUR_KNOB].value())
+            except (TypeError, ValueError):
+                continue
+
+    return families
+
+
+def _save_family_registry(families):
+    root = nuke.root()
+
+    if FAMILY_ROOT_KNOB not in root.knobs():
+        knob = nuke.String_Knob(FAMILY_ROOT_KNOB, FAMILY_ROOT_KNOB)
+        knob.setVisible(False)
+        root.addKnob(knob)
+
+    root[FAMILY_ROOT_KNOB].setValue(json.dumps({
+        "version": 1,
+        "families": families,
+    }, sort_keys=True))
+
+
+def _add_hidden_string_knob(node, name, value):
+    if name not in node.knobs():
+        knob = nuke.String_Knob(name, name)
+        knob.setVisible(False)
+        node.addKnob(knob)
+
+    node[name].setValue(str(value))
+
+
+def _matching_family(title, families):
+    """Return the longest word-prefix family, then a same-root fallback."""
+    words = _normalise_title(title).split()
+
+    if not words:
+        return None
+
+    prefix_matches = []
+    root_matches = []
+
+    for family in families:
+        family_words = family.split()
+
+        if not family_words or family_words[0] != words[0]:
+            continue
+
+        root_matches.append(family)
+
+        if words[:len(family_words)] == family_words:
+            prefix_matches.append(family)
+
+    if prefix_matches:
+        return max(prefix_matches, key=lambda item: (len(item.split()), len(item)))
+
+    if root_matches:
+        return min(root_matches, key=lambda item: (len(item.split()), len(item)))
+
+    return None
+
+
+def _family_variation_rgb(title, family, base_rgb):
+    normalised = _normalise_title(title)
+
+    if normalised == family:
+        return base_rgb
+
+    red, green, blue = (component / 255.0 for component in base_rgb)
+    hue, saturation, value = colorsys.rgb_to_hsv(red, green, blue)
+    hue += (_stable_fraction(normalised, 3) - 0.5) * 0.035
+    saturation += (_stable_fraction(normalised, 9) - 0.5) * 0.06
+    value += (_stable_fraction(normalised, 15) - 0.5) * 0.06
+    varied = colorsys.hsv_to_rgb(
+        hue % 1.0,
+        max(0.08, min(0.95, saturation)),
+        max(0.12, min(0.95, value)),
+    )
+    return tuple(int(round(component * 255)) for component in varied)
+
+
+def _label_similarity(first, second):
+    first = _normalise_title(first)
+    second = _normalise_title(second)
+    direct = difflib.SequenceMatcher(None, first, second).ratio()
+    ordered = difflib.SequenceMatcher(
+        None,
+        " ".join(sorted(first.split())),
+        " ".join(sorted(second.split())),
+    ).ratio()
+    return max(direct, ordered)
+
+
+def _similarity_rgb(title, examples, palette_name):
+    """Reuse the hue of the most textually similar existing backdrop."""
+    matches = [
+        (_label_similarity(title, other_title), other_rgb)
+        for other_title, other_rgb in examples
+        if _normalise_title(other_title) != _normalise_title(title)
+    ]
+
+    if not matches:
+        return automatic_rgb(title, palette_name)
+
+    score, rgb = max(matches, key=lambda item: item[0])
+
+    if score < 0.72:
+        return automatic_rgb(title, palette_name)
+
+    return _family_variation_rgb(title, "", rgb)
+
+
+def _backdrop_colour_examples():
+    examples = []
+
+    for backdrop in nuke.allNodes("BackdropNode"):
+        try:
+            label = str(backdrop["label"].value() or "")
+            rgb = _unpacked_colour(backdrop["tile_color"].value())
+        except Exception:
+            continue
+
+        if _normalise_title(label):
+            examples.append((label, rgb))
+
+    return examples
 
 
 def _contrast_colour(rgb):
@@ -311,6 +473,10 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         super(CreateBackdropDialog, self).__init__(parent)
         self._nodes = list(nodes)
         self._manual_rgb = (58, 132, 134)
+        self._families = _family_registry()
+        self._colour_examples = _backdrop_colour_examples()
+        self._pending_family = None
+        self._pending_family_rgb = None
         self._preview_backdrop = None
         self._influence_backdrop = None
         self._preview_font_name = ""
@@ -387,6 +553,20 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         colour_options.addStretch()
         form.addRow("Colour:", colour_widget)
 
+        self.colour_method_combo = QtWidgets.QComboBox()
+        for label, value in COLOUR_METHODS:
+            self.colour_method_combo.addItem(label, value)
+        saved_method = str(_settings().value("colour_method", "hash"))
+        method_index = self.colour_method_combo.findData(saved_method)
+        self.colour_method_combo.setCurrentIndex(
+            method_index if method_index >= 0 else 0
+        )
+        self.colour_method_combo.setToolTip(
+            "Choose how unmatched labels receive an initial colour. Saved "
+            "script families always take priority."
+        )
+        form.addRow("Unmatched labels:", self.colour_method_combo)
+
         swatch_widget = QtWidgets.QWidget()
         self.swatch_layout = QtWidgets.QHBoxLayout(swatch_widget)
         self.swatch_layout.setContentsMargins(0, 0, 0, 0)
@@ -432,8 +612,11 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
         self.palette_combo.currentTextChanged.connect(self._rebuild_swatches)
-        self.title_field.textChanged.connect(self._update_colour_preview)
+        self.title_field.textChanged.connect(self._title_changed)
         self.auto_colour_checkbox.toggled.connect(self._auto_colour_toggled)
+        self.colour_method_combo.currentIndexChanged.connect(
+            self._update_colour_preview
+        )
         self.margin_field.valueChanged.connect(self._update_graph_preview)
         self.align_edges_checkbox.toggled.connect(self._update_graph_preview)
         self.text_size_combo.currentIndexChanged.connect(
@@ -633,19 +816,67 @@ class CreateBackdropDialog(QtWidgets.QDialog):
 
     def _select_swatch(self, rgb):
         self._manual_rgb = rgb
+
+        if self.auto_colour_checkbox.isChecked():
+            family = _normalise_title(self.title_field.text())
+
+            if family:
+                self._pending_family = family
+                self._pending_family_rgb = rgb
+
         self._update_colour_preview()
 
     def _auto_colour_toggled(self, checked):
         for button in self._swatch_buttons:
-            button.setEnabled(not checked)
+            button.setEnabled(True)
+            button.setToolTip(
+                "Set this as the current label family's colour"
+                if checked else "Use this manual backdrop colour"
+            )
+        self.colour_method_combo.setEnabled(checked)
         self._update_colour_preview()
+
+    def _title_changed(self, _text=None):
+        if (
+            self._pending_family
+            and _normalise_title(self.title_field.text())
+            != self._pending_family
+        ):
+            self._pending_family = None
+            self._pending_family_rgb = None
+
+        self._update_colour_preview()
+
+    def _automatic_colour(self):
+        title = self.title_field.text()
+        families = dict(self._families)
+
+        if self._pending_family and self._pending_family_rgb is not None:
+            families[self._pending_family] = _packed_colour(
+                self._pending_family_rgb
+            )
+
+        family = _matching_family(title, families)
+
+        if family:
+            return _family_variation_rgb(
+                title,
+                family,
+                _unpacked_colour(families[family]),
+            )
+
+        if self.colour_method_combo.currentData() == "similarity":
+            return _similarity_rgb(
+                title,
+                self._colour_examples,
+                self.palette_combo.currentText(),
+            )
+
+        return automatic_rgb(title, self.palette_combo.currentText())
 
     def selected_rgb(self):
         if self.auto_colour_checkbox.isChecked():
-            return automatic_rgb(
-                self.title_field.text(),
-                self.palette_combo.currentText()
-            )
+            return self._automatic_colour()
         return self._manual_rgb
 
     def _update_colour_preview(self, _value=None):
@@ -667,6 +898,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         settings.setValue("appearance", self.appearance_combo.currentText())
         settings.setValue("palette", self.palette_combo.currentText())
         settings.setValue("auto_colour", self.auto_colour_checkbox.isChecked())
+        settings.setValue("colour_method", self.colour_method_combo.currentData())
         settings.sync()
         self.accept()
 
@@ -679,6 +911,16 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "bold": self.bold_checkbox.isChecked(),
             "wrap_title": self.wrap_title_checkbox.isChecked(),
             "font_name": self._preview_font_name,
+            "family": (
+                self._pending_family
+                if self.auto_colour_checkbox.isChecked()
+                else None
+            ),
+            "family_rgb": (
+                self._pending_family_rgb
+                if self.auto_colour_checkbox.isChecked()
+                else None
+            ),
             "appearance": self.appearance_combo.currentText(),
             "rgb": self.selected_rgb(),
         }
@@ -751,6 +993,15 @@ def create_backdrop():
     undo.begin("Create QTools Backdrop")
 
     try:
+        families = _family_registry()
+
+        if values["family"] and values["family_rgb"] is not None:
+            families[values["family"]] = _packed_colour(
+                values["family_rgb"]
+            )
+            _save_family_registry(families)
+
+        active_family = _matching_family(values["title"], families)
         backdrop = nuke.nodes.BackdropNode(
             xpos=xpos,
             ypos=ypos,
@@ -762,6 +1013,16 @@ def create_backdrop():
             note_font_color=_contrast_colour(values["rgb"]),
             z_order=_next_backdrop_z_order(),
         )
+
+        if active_family:
+            _add_hidden_string_knob(
+                backdrop, FAMILY_NODE_KNOB, active_family
+            )
+            _add_hidden_string_knob(
+                backdrop,
+                FAMILY_COLOUR_KNOB,
+                families[active_family],
+            )
 
         if "appearance" in backdrop.knobs():
             backdrop["appearance"].setValue(values["appearance"])
