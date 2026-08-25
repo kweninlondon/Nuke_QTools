@@ -164,6 +164,66 @@ def _backdrop_geometry(nodes, margin_factor, font_size):
     return left, top, right - left, bottom - top
 
 
+def _label_font(font_name, font_size, bold):
+    """Build a Qt font that approximates Nuke's graph label rendering."""
+    font = QtGui.QFont(font_name) if font_name else QtGui.QFont()
+    font.setPixelSize(max(1, int(font_size)))
+    font.setBold(bool(bold))
+    return font
+
+
+def _wrap_title(title, backdrop_width, font_size, bold=False, font_name=""):
+    """Wrap a title at word boundaries when it exceeds the backdrop width."""
+    words = str(title).split()
+
+    if len(words) < 2:
+        return " ".join(words)
+
+    metrics = QtGui.QFontMetricsF(
+        _label_font(font_name, font_size, bold)
+    )
+    available_width = max(1.0, float(backdrop_width) - 24.0)
+
+    def text_width(text):
+        if hasattr(metrics, "horizontalAdvance"):
+            return metrics.horizontalAdvance(text)
+        return metrics.width(text)
+
+    lines = []
+    current = words[0]
+
+    for word in words[1:]:
+        candidate = "{} {}".format(current, word)
+
+        if text_width(candidate) <= available_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+
+    lines.append(current)
+    return "\n".join(lines)
+
+
+def _make_label(title, geometry, font_size, bold, font_name, wrap_title):
+    if not wrap_title:
+        return title
+
+    return _wrap_title(title, geometry[2], font_size, bold, font_name)
+
+
+def _make_room_for_label(geometry, label, font_size):
+    """Extend the backdrop upward for every wrapped line after the first."""
+    extra_lines = max(0, str(label).count("\n"))
+
+    if not extra_lines:
+        return geometry
+
+    left, top, width, height = geometry
+    extra_height = extra_lines * (int(font_size) + 4)
+    return left, top - extra_height, width, height + extra_height
+
+
 def _closest_outward_edge(current, candidates, direction):
     """Return the nearest candidate that only expands the new backdrop."""
     eligible = [
@@ -284,6 +344,18 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         text_layout.addStretch()
         form.addRow("Text:", text_widget)
 
+        self.wrap_title_checkbox = QtWidgets.QCheckBox(
+            "Wrap title to fit backdrop"
+        )
+        self.wrap_title_checkbox.setChecked(
+            _setting_bool("wrap_title", True)
+        )
+        self.wrap_title_checkbox.setToolTip(
+            "Move whole words onto new lines when the title is wider than "
+            "the backdrop."
+        )
+        form.addRow("Title layout:", self.wrap_title_checkbox)
+
         self.appearance_combo = QtWidgets.QComboBox()
         self.appearance_combo.addItems(["Fill", "Border"])
         saved_appearance = str(_settings().value("appearance", "Fill"))
@@ -368,6 +440,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._update_graph_preview
         )
         self.bold_checkbox.toggled.connect(self._update_graph_preview)
+        self.wrap_title_checkbox.toggled.connect(self._update_graph_preview)
         self.appearance_combo.currentTextChanged.connect(
             self._update_graph_preview
         )
@@ -469,7 +542,19 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 ]
             )
 
-        return values, aligned, influence
+        label = _make_label(
+            values["title"] or "Backdrop preview",
+            aligned,
+            values["font_size"],
+            values["bold"],
+            values["font_name"],
+            values["wrap_title"],
+        )
+        aligned = _make_room_for_label(
+            aligned, label, values["font_size"]
+        )
+
+        return values, aligned, influence, label
 
     def _set_preview_geometry(self, node, geometry):
         left, top, width, height = geometry
@@ -482,9 +567,11 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         if not self._preview_ready:
             return
 
-        values, preview_geometry, influence_geometry = self._preview_geometries()
+        values, preview_geometry, influence_geometry, label = (
+            self._preview_geometries()
+        )
         preview = self._preview_backdrop
-        preview["label"].setValue(values["title"] or "Backdrop preview")
+        preview["label"].setValue(label)
         preview["note_font_size"].setValue(values["font_size"])
         preview["tile_color"].setValue(_packed_colour(values["rgb"]))
         preview["note_font_color"].setValue(
@@ -576,6 +663,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         settings.setValue("align_edges", self.align_edges_checkbox.isChecked())
         settings.setValue("text_size", self.text_size_combo.currentData())
         settings.setValue("bold", self.bold_checkbox.isChecked())
+        settings.setValue("wrap_title", self.wrap_title_checkbox.isChecked())
         settings.setValue("appearance", self.appearance_combo.currentText())
         settings.setValue("palette", self.palette_combo.currentText())
         settings.setValue("auto_colour", self.auto_colour_checkbox.isChecked())
@@ -589,6 +677,8 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "align_edges": self.align_edges_checkbox.isChecked(),
             "font_size": int(self.text_size_combo.currentData()),
             "bold": self.bold_checkbox.isChecked(),
+            "wrap_title": self.wrap_title_checkbox.isChecked(),
+            "font_name": self._preview_font_name,
             "appearance": self.appearance_combo.currentText(),
             "rgb": self.selected_rgb(),
         }
@@ -646,6 +736,17 @@ def create_backdrop():
             (xpos, ypos, width, height),
             nodes
         )
+    label = _make_label(
+        values["title"],
+        (xpos, ypos, width, height),
+        values["font_size"],
+        values["bold"],
+        values["font_name"],
+        values["wrap_title"],
+    )
+    xpos, ypos, width, height = _make_room_for_label(
+        (xpos, ypos, width, height), label, values["font_size"]
+    )
     undo = nuke.Undo()
     undo.begin("Create QTools Backdrop")
 
@@ -655,7 +756,7 @@ def create_backdrop():
             ypos=ypos,
             bdwidth=width,
             bdheight=height,
-            label=values["title"],
+            label=label,
             note_font_size=values["font_size"],
             tile_color=_packed_colour(values["rgb"]),
             note_font_color=_contrast_colour(values["rgb"]),
