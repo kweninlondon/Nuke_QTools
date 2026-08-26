@@ -975,7 +975,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 state["bdheight"],
             )
             label = _make_label(
-                values["title"] or "Backdrop preview",
+                values["title"],
                 geometry,
                 values["font_size"],
                 values["bold"],
@@ -1012,7 +1012,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             )
 
         label = _make_label(
-            values["title"] or "Backdrop preview",
+            values["title"],
             aligned,
             values["font_size"],
             values["bold"],
