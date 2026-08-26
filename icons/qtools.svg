@@ -5,15 +5,12 @@
       <stop offset="0" stop-color="#343a40"/>
       <stop offset="1" stop-color="#171a1d"/>
     </linearGradient>
-    <linearGradient id="accent" x1="7" y1="6" x2="26" y2="27" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#d6ff45"/>
-      <stop offset="1" stop-color="#68c935"/>
+    <linearGradient id="nuke-orange" x1="18" y1="18" x2="25" y2="25" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffb23e"/>
+      <stop offset="1" stop-color="#f26a21"/>
     </linearGradient>
   </defs>
-  <path d="M8 2.5h16l5.5 5.5v16L24 29.5H8L2.5 24V8z" fill="url(#plate)" stroke="#080a0b"/>
-  <path d="M8.5 4.5h15l4 4v15l-4 4h-15l-4-4v-15z" fill="none" stroke="url(#accent)" stroke-width="1.5"/>
-  <circle cx="15.1" cy="14.6" r="7.1" fill="none" stroke="#f4f6f7" stroke-width="3.4"/>
-  <path d="M19.4 19.1l6.1 6.1" fill="none" stroke="url(#accent)" stroke-linecap="round" stroke-width="3.4"/>
-  <circle cx="6.2" cy="8" r="1.25" fill="#d6ff45"/>
-  <circle cx="25.8" cy="8" r="1.25" fill="#d6ff45"/>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="5" fill="url(#plate)" stroke="url(#nuke-orange)" stroke-width="2.5"/>
+  <circle cx="15.5" cy="15.7" r="6.1" fill="none" stroke="url(#nuke-orange)" stroke-width="3"/>
+  <path d="M17.3 17.7l4.3 4.3" fill="none" stroke="url(#nuke-orange)" stroke-linecap="round" stroke-width="2.8"/>
 </svg>
