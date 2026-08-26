@@ -318,6 +318,39 @@ def _expanded_geometry(current, candidate):
     return left, top, right - left, bottom - top
 
 
+def _capture_graph_positions(excluded=None):
+    """Capture graph positions so Backdrop resizing cannot drag nodes."""
+    excluded = set(excluded or [])
+    return [
+        (node, node.xpos(), node.ypos())
+        for node in nuke.allNodes()
+        if node not in excluded
+    ]
+
+
+def _restore_graph_positions(positions):
+    """Restore Backdrops first, then regular nodes nested inside them."""
+    backdrops = []
+    regular_nodes = []
+
+    for item in positions:
+        if item[0].Class() == "BackdropNode":
+            backdrops.append(item)
+        else:
+            regular_nodes.append(item)
+
+    backdrops.sort(
+        key=lambda item: -int(item[0]["bdwidth"].value())
+        * int(item[0]["bdheight"].value())
+    )
+
+    for node, xpos, ypos in backdrops + regular_nodes:
+        try:
+            node.setXYpos(int(xpos), int(ypos))
+        except Exception:
+            pass
+
+
 def _nodes_inside_backdrop(backdrop):
     """Return non-Backdrop nodes fully contained by a backdrop."""
     left, top, right, bottom = _node_bounds(backdrop)
@@ -439,6 +472,26 @@ def _closest_outward_edge(current, candidates, direction):
     return min(eligible, key=lambda candidate: abs(candidate - current))
 
 
+def _bounds_contain(outer, inner):
+    """Return whether one left/top/right/bottom box contains another."""
+    return (
+        outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and outer[2] >= inner[2]
+        and outer[3] >= inner[3]
+    )
+
+
+def _bounds_intersect(first, second):
+    """Return whether two closed boxes overlap or touch at their edges."""
+    return (
+        first[0] <= second[2]
+        and first[2] >= second[0]
+        and first[1] <= second[3]
+        and first[3] >= second[1]
+    )
+
+
 def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
     """Expand nearby edges to existing Backdrop coordinates when possible."""
     left, top, width, height = geometry
@@ -455,6 +508,7 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
     right_candidates = []
     top_candidates = []
     bottom_candidates = []
+    nearby_bounds = []
 
     for backdrop in nuke.allNodes("BackdropNode"):
         if backdrop in selected_nodes:
@@ -474,6 +528,9 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
         if not intersects_influence:
             continue
 
+        nearby_bounds.append(
+            (other_left, other_top, other_right, other_bottom)
+        )
         left_candidates.append((other_left, horizontal_tolerance))
         right_candidates.append((other_right, horizontal_tolerance))
         top_candidates.append((other_top, vertical_tolerance))
@@ -483,6 +540,38 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
     aligned_right = _closest_outward_edge(right, right_candidates, 1)
     aligned_top = _closest_outward_edge(top, top_candidates, -1)
     aligned_bottom = _closest_outward_edge(bottom, bottom_candidates, 1)
+
+    original_bounds = (left, top, right, bottom)
+
+    # Parallel edges may share an X or Y coordinate only while the Backdrops
+    # remain separated. Reject boundary contact, overlap, or new containment.
+    # Existing intentional nesting remains valid.
+    for other_bounds in nearby_bounds:
+        aligned_bounds = (
+            aligned_left,
+            aligned_top,
+            aligned_right,
+            aligned_bottom,
+        )
+
+        originally_nested = (
+            _bounds_contain(original_bounds, other_bounds)
+            or _bounds_contain(other_bounds, original_bounds)
+        )
+
+        if (
+            _bounds_intersect(aligned_bounds, other_bounds)
+            and not originally_nested
+        ):
+            if aligned_left < left and other_bounds[0] < left:
+                aligned_left = left
+            if aligned_top < top and other_bounds[1] < top:
+                aligned_top = top
+            if aligned_right > right and other_bounds[2] > right:
+                aligned_right = right
+            if aligned_bottom > bottom and other_bounds[3] > bottom:
+                aligned_bottom = bottom
+
     return (
         aligned_left,
         aligned_top,
@@ -519,6 +608,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._preview_backdrop = None
         self._influence_backdrop = None
         self._edit_snapshot = None
+        self._graph_positions = []
         self._preview_font_name = ""
         self._preview_ready = False
         self._undo_disabled = False
@@ -769,20 +859,23 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         try:
             nuke.Undo.disable()
             self._undo_disabled = True
-            z_order = _next_backdrop_z_order()
-            self._influence_backdrop = nuke.nodes.BackdropNode(
-                label="Zone of influence (50%)",
-                tile_color=0x808080FF,
-                note_font_color=0xFFFFFFFF,
-                note_font_size=50,
-                z_order=z_order - 1,
+            self._graph_positions = _capture_graph_positions(
+                [self._edit_backdrop] if self._edit_backdrop is not None else []
             )
+            z_order = _next_backdrop_z_order()
             if self._edit_backdrop is not None:
                 self._edit_snapshot = self._capture_backdrop_state(
                     self._edit_backdrop
                 )
                 self._preview_backdrop = self._edit_backdrop
             else:
+                self._influence_backdrop = nuke.nodes.BackdropNode(
+                    label="Zone of influence (50%)",
+                    tile_color=0x808080FF,
+                    note_font_color=0xFFFFFFFF,
+                    note_font_size=50,
+                    z_order=z_order - 1,
+                )
                 self._preview_backdrop = nuke.nodes.BackdropNode(
                     z_order=z_order,
                 )
@@ -794,10 +887,11 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                     self._preview_backdrop["note_font"].value() or ""
                 )
 
-            if "appearance" in self._influence_backdrop.knobs():
-                self._influence_backdrop["appearance"].setValue("Border")
-            if "border_width" in self._influence_backdrop.knobs():
-                self._influence_backdrop["border_width"].setValue(3)
+            if self._influence_backdrop is not None:
+                if "appearance" in self._influence_backdrop.knobs():
+                    self._influence_backdrop["appearance"].setValue("Border")
+                if "border_width" in self._influence_backdrop.knobs():
+                    self._influence_backdrop["border_width"].setValue(3)
 
             self._preview_ready = True
             self._update_graph_preview()
@@ -805,7 +899,8 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             for node in self._nodes:
                 node.setSelected(True)
             self._preview_backdrop.setSelected(False)
-            self._influence_backdrop.setSelected(False)
+            if self._influence_backdrop is not None:
+                self._influence_backdrop.setSelected(False)
         except Exception:
             self.cleanup_graph_preview()
 
@@ -851,7 +946,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._edit_backdrop,
             self._edit_snapshot,
         )
+        _restore_graph_positions(self._graph_positions)
         self._edit_snapshot = None
+        self._graph_positions = []
 
         for node in (self._preview_backdrop, self._influence_backdrop):
             if node is None:
@@ -923,8 +1020,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         if values["align_edges"]:
             excluded_nodes = self._nodes + [
                 self._preview_backdrop,
-                self._influence_backdrop,
             ]
+            if self._influence_backdrop is not None:
+                excluded_nodes.append(self._influence_backdrop)
             if self._edit_backdrop is not None:
                 excluded_nodes.append(self._edit_backdrop)
             aligned = _align_backdrop_geometry(
@@ -973,6 +1071,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._preview_geometries()
         )
         preview = self._preview_backdrop
+        preview.setSelected(False)
+        if self._influence_backdrop is not None:
+            self._influence_backdrop.setSelected(False)
         preview["label"].setValue(label)
         preview["note_font_size"].setValue(values["font_size"])
         preview["tile_color"].setValue(_packed_colour(values["rgb"]))
@@ -994,19 +1095,21 @@ class CreateBackdropDialog(QtWidgets.QDialog):
 
         self._set_preview_geometry(preview, preview_geometry)
 
-        if values["align_edges"]:
+        if values["align_edges"] and self._influence_backdrop is not None:
             self._set_preview_geometry(
                 self._influence_backdrop,
                 influence_geometry
             )
-        else:
+        elif self._influence_backdrop is not None:
             self._set_preview_geometry(
                 self._influence_backdrop,
                 (1000000000, 1000000000, 1, 1)
             )
 
+        _restore_graph_positions(self._graph_positions)
         preview.setSelected(False)
-        self._influence_backdrop.setSelected(False)
+        if self._influence_backdrop is not None:
+            self._influence_backdrop.setSelected(False)
 
     def _rebuild_swatches(self, _palette=None):
         while self._swatch_buttons:
@@ -1253,6 +1356,7 @@ def create_backdrop():
         "Edit QTools Backdrop" if edit_backdrop is not None
         else "Create QTools Backdrop"
     )
+    graph_positions = []
 
     try:
         families = _family_registry()
@@ -1269,6 +1373,10 @@ def create_backdrop():
             )
         else:
             backdrop = edit_backdrop
+
+        graph_positions = _capture_graph_positions([backdrop])
+        for node in nuke.selectedNodes():
+            node.setSelected(False)
 
         backdrop["label"].setValue(label)
         backdrop["note_font_size"].setValue(values["font_size"])
@@ -1297,10 +1405,12 @@ def create_backdrop():
         backdrop.setXYpos(int(xpos), int(ypos))
         backdrop["bdwidth"].setValue(int(width))
         backdrop["bdheight"].setValue(int(height))
+        _restore_graph_positions(graph_positions)
 
         for node in nuke.selectedNodes():
             node.setSelected(False)
         backdrop.setSelected(True)
         return backdrop
     finally:
+        _restore_graph_positions(graph_positions)
         undo.end()
