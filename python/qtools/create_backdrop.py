@@ -301,8 +301,25 @@ def _backdrop_geometry(nodes, margin_factor, font_size):
     return left, top, right - left, bottom - top
 
 
+def _expanded_geometry(current, candidate):
+    """Union two Backdrop geometries so no current edge moves inward."""
+    current_left, current_top, current_width, current_height = current
+    candidate_left, candidate_top, candidate_width, candidate_height = candidate
+    left = min(current_left, candidate_left)
+    top = min(current_top, candidate_top)
+    right = max(
+        current_left + current_width,
+        candidate_left + candidate_width,
+    )
+    bottom = max(
+        current_top + current_height,
+        candidate_top + candidate_height,
+    )
+    return left, top, right - left, bottom - top
+
+
 def _nodes_inside_backdrop(backdrop):
-    """Return non-Backdrop nodes whose centres are inside a backdrop."""
+    """Return non-Backdrop nodes fully contained by a backdrop."""
     left, top, right, bottom = _node_bounds(backdrop)
     contained = []
 
@@ -311,10 +328,12 @@ def _nodes_inside_backdrop(backdrop):
             continue
 
         node_left, node_top, node_right, node_bottom = _node_bounds(node)
-        centre_x = (node_left + node_right) * 0.5
-        centre_y = (node_top + node_bottom) * 0.5
-
-        if left <= centre_x <= right and top <= centre_y <= bottom:
+        if (
+            node_left >= left
+            and node_top >= top
+            and node_right <= right
+            and node_bottom <= bottom
+        ):
             contained.append(node)
 
     return contained
@@ -499,6 +518,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._pending_family_rgb = None
         self._preview_backdrop = None
         self._influence_backdrop = None
+        self._edit_snapshot = None
         self._preview_font_name = ""
         self._preview_ready = False
         self._undo_disabled = False
@@ -757,9 +777,15 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 note_font_size=50,
                 z_order=z_order - 1,
             )
-            self._preview_backdrop = nuke.nodes.BackdropNode(
-                z_order=z_order,
-            )
+            if self._edit_backdrop is not None:
+                self._edit_snapshot = self._capture_backdrop_state(
+                    self._edit_backdrop
+                )
+                self._preview_backdrop = self._edit_backdrop
+            else:
+                self._preview_backdrop = nuke.nodes.BackdropNode(
+                    z_order=z_order,
+                )
             if (
                 self._edit_backdrop is None
                 and "note_font" in self._preview_backdrop.knobs()
@@ -783,12 +809,54 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         except Exception:
             self.cleanup_graph_preview()
 
+    @staticmethod
+    def _capture_backdrop_state(backdrop):
+        state = {
+            "xpos": backdrop.xpos(),
+            "ypos": backdrop.ypos(),
+            "bdwidth": backdrop["bdwidth"].value(),
+            "bdheight": backdrop["bdheight"].value(),
+        }
+        for name in (
+            "label",
+            "note_font_size",
+            "tile_color",
+            "note_font_color",
+            "appearance",
+            "border_width",
+            "note_font",
+        ):
+            if name in backdrop.knobs():
+                state[name] = backdrop[name].value()
+        return state
+
+    @staticmethod
+    def _restore_backdrop_state(backdrop, state):
+        if backdrop is None or not state:
+            return
+        for name, value in state.items():
+            if name in {"xpos", "ypos", "bdwidth", "bdheight"}:
+                continue
+            if name in backdrop.knobs():
+                backdrop[name].setValue(value)
+        backdrop.setXYpos(int(state["xpos"]), int(state["ypos"]))
+        backdrop["bdwidth"].setValue(state["bdwidth"])
+        backdrop["bdheight"].setValue(state["bdheight"])
+
     def cleanup_graph_preview(self):
         """Remove temporary graph nodes and restore normal undo recording."""
         self._preview_ready = False
 
+        self._restore_backdrop_state(
+            self._edit_backdrop,
+            self._edit_snapshot,
+        )
+        self._edit_snapshot = None
+
         for node in (self._preview_backdrop, self._influence_backdrop):
             if node is None:
+                continue
+            if node is self._edit_backdrop:
                 continue
             try:
                 nuke.delete(node)
@@ -821,8 +889,13 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         values = self.values()
 
         if self._edit_backdrop is not None and not values["refit_geometry"]:
-            left, top, right, bottom = _node_bounds(self._edit_backdrop)
-            geometry = (left, top, right - left, bottom - top)
+            state = self._edit_snapshot
+            geometry = (
+                state["xpos"],
+                state["ypos"],
+                state["bdwidth"],
+                state["bdheight"],
+            )
             label = _make_label(
                 values["title"] or "Backdrop preview",
                 geometry,
@@ -870,6 +943,18 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         aligned = _make_room_for_label(
             aligned, label, values["font_size"]
         )
+
+        if self._edit_backdrop is not None:
+            state = self._edit_snapshot
+            aligned = _expanded_geometry(
+                (
+                    state["xpos"],
+                    state["ypos"],
+                    state["bdwidth"],
+                    state["bdheight"],
+                ),
+                aligned,
+            )
 
         return values, aligned, influence, label
 
@@ -1157,6 +1242,12 @@ def create_backdrop():
         xpos, ypos, width, height = _make_room_for_label(
             (xpos, ypos, width, height), label, values["font_size"]
         )
+        if edit_backdrop is not None:
+            left, top, right, bottom = _node_bounds(edit_backdrop)
+            xpos, ypos, width, height = _expanded_geometry(
+                (left, top, right - left, bottom - top),
+                (xpos, ypos, width, height),
+            )
     undo = nuke.Undo()
     undo.begin(
         "Edit QTools Backdrop" if edit_backdrop is not None
