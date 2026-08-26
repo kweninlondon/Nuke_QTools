@@ -301,6 +301,49 @@ def _backdrop_geometry(nodes, margin_factor, font_size):
     return left, top, right - left, bottom - top
 
 
+def _nodes_inside_backdrop(backdrop):
+    """Return non-Backdrop nodes whose centres are inside a backdrop."""
+    left, top, right, bottom = _node_bounds(backdrop)
+    contained = []
+
+    for node in nuke.allNodes():
+        if node is backdrop or node.Class() in {"BackdropNode", "Viewer"}:
+            continue
+
+        node_left, node_top, node_right, node_bottom = _node_bounds(node)
+        centre_x = (node_left + node_right) * 0.5
+        centre_y = (node_top + node_bottom) * 0.5
+
+        if left <= centre_x <= right and top <= centre_y <= bottom:
+            contained.append(node)
+
+    return contained
+
+
+def _inferred_margin_factor(backdrop, nodes):
+    """Estimate the tool margin used to create an existing backdrop."""
+    if not nodes:
+        return 1.0
+
+    left, _top, right, bottom = _node_bounds(backdrop)
+    bounds = [_node_bounds(node) for node in nodes]
+    padding = sorted([
+        max(0, min(item[0] for item in bounds) - left),
+        max(0, right - max(item[2] for item in bounds)),
+        max(0, bottom - max(item[3] for item in bounds)),
+    ])
+    margin = padding[len(padding) // 2]
+    return max(0.0, min(5.0, margin / float(_average_node_size(nodes))))
+
+
+def _base_font_name(font_name):
+    """Remove a Bold style token while preserving the rest of a font name."""
+    return " ".join(
+        token for token in str(font_name).split()
+        if token.lower() != "bold"
+    )
+
+
 def _label_font(font_name, font_size, bold):
     """Build a Qt font that approximates Nuke's graph label rendering."""
     font = QtGui.QFont(font_name) if font_name else QtGui.QFont()
@@ -444,9 +487,11 @@ def _next_backdrop_z_order():
 class CreateBackdropDialog(QtWidgets.QDialog):
     """Collect backdrop title, layout, typography and colour choices."""
 
-    def __init__(self, nodes, parent=None):
+    def __init__(self, nodes, parent=None, edit_backdrop=None):
         super(CreateBackdropDialog, self).__init__(parent)
         self._nodes = list(nodes)
+        self._edit_backdrop = edit_backdrop
+        self._initial_selection = list(nuke.selectedNodes())
         self._manual_rgb = (58, 132, 134)
         self._families = _family_registry()
         self._colour_examples = _backdrop_colour_examples()
@@ -457,7 +502,10 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._preview_font_name = ""
         self._preview_ready = False
         self._undo_disabled = False
-        self.setWindowTitle("Create backdrop")
+        self.setWindowTitle(
+            "Edit backdrop" if self._edit_backdrop is not None
+            else "Create backdrop"
+        )
         self.setMinimumWidth(520)
         layout = QtWidgets.QVBoxLayout(self)
         form = QtWidgets.QFormLayout()
@@ -567,6 +615,25 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         margin_layout.addStretch()
         form.addRow("Margin:", margin_widget)
 
+        self.refit_geometry_label = QtWidgets.QLabel("Geometry:")
+        self.refit_geometry_checkbox = QtWidgets.QCheckBox(
+            "Refit backdrop around contained nodes"
+        )
+        self.refit_geometry_checkbox.setChecked(
+            self._edit_backdrop is not None
+        )
+        self.refit_geometry_checkbox.setToolTip(
+            "Recalculate the backdrop bounds from its contained nodes and "
+            "the selected margin when Apply is clicked."
+        )
+        form.addRow(
+            self.refit_geometry_label,
+            self.refit_geometry_checkbox,
+        )
+        edit_mode = self._edit_backdrop is not None
+        self.refit_geometry_label.setVisible(edit_mode)
+        self.refit_geometry_checkbox.setVisible(edit_mode)
+
         self.align_edges_checkbox = QtWidgets.QCheckBox(
             "Align nearby backdrop edges"
         )
@@ -583,7 +650,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
-        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Create")
+        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText(
+            "Apply" if self._edit_backdrop is not None else "Create"
+        )
         layout.addWidget(buttons)
 
         self.palette_combo.currentTextChanged.connect(self._rebuild_swatches)
@@ -593,6 +662,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._update_colour_preview
         )
         self.margin_field.valueChanged.connect(self._update_graph_preview)
+        self.refit_geometry_checkbox.toggled.connect(
+            self._refit_geometry_toggled
+        )
         self.align_edges_checkbox.toggled.connect(self._update_graph_preview)
         self.text_size_combo.currentIndexChanged.connect(
             self._update_graph_preview
@@ -606,10 +678,71 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.reject)
 
         self._rebuild_swatches()
+        self._load_edit_values()
+        self._refit_geometry_toggled(
+            self.refit_geometry_checkbox.isChecked()
+        )
         self._auto_colour_toggled(self.auto_colour_checkbox.isChecked())
         self._start_graph_preview()
         QtCore.QTimer.singleShot(0, self._update_graph_preview)
         self.title_field.setFocus()
+
+    def _load_edit_values(self):
+        """Populate controls from the selected Backdrop in edit mode."""
+        backdrop = self._edit_backdrop
+
+        if backdrop is None:
+            return
+
+        knobs = backdrop.knobs()
+        label = str(backdrop["label"].value() or "")
+        self.title_field.setText(" ".join(label.split()))
+
+        font_size = int(backdrop["note_font_size"].value())
+        size_index = self.text_size_combo.findData(font_size)
+
+        if size_index < 0:
+            self.text_size_combo.addItem(
+                "Custom ({})".format(font_size), font_size
+            )
+            size_index = self.text_size_combo.count() - 1
+
+        self.text_size_combo.setCurrentIndex(size_index)
+        font_name = str(
+            backdrop["note_font"].value() if "note_font" in knobs else ""
+        )
+        self._preview_font_name = _base_font_name(font_name)
+        self.bold_checkbox.setChecked("bold" in font_name.lower())
+        self.wrap_title_checkbox.setChecked(
+            "\n" in label or _setting_bool("wrap_title", True)
+        )
+
+        if "appearance" in knobs:
+            appearance = str(backdrop["appearance"].value())
+            appearance_index = self.appearance_combo.findText(appearance)
+            if appearance_index >= 0:
+                self.appearance_combo.setCurrentIndex(appearance_index)
+
+        self.auto_colour_checkbox.setChecked(False)
+        self._manual_rgb = _unpacked_colour(backdrop["tile_color"].value())
+        self.margin_field.setValue(
+            _inferred_margin_factor(backdrop, self._nodes)
+        )
+
+        if not self._nodes:
+            self.refit_geometry_checkbox.setChecked(False)
+            self.refit_geometry_checkbox.setEnabled(False)
+            self.margin_field.setToolTip(
+                "This empty backdrop keeps its existing geometry."
+            )
+
+    def _refit_geometry_toggled(self, checked):
+        enabled = bool(checked) or self._edit_backdrop is None
+        if self._edit_backdrop is not None and not self._nodes:
+            enabled = False
+        self.margin_field.setEnabled(enabled)
+        self.align_edges_checkbox.setEnabled(enabled)
+        self._update_graph_preview()
 
     def _start_graph_preview(self):
         """Create temporary graph nodes while preventing undo-stack noise."""
@@ -627,7 +760,10 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._preview_backdrop = nuke.nodes.BackdropNode(
                 z_order=z_order,
             )
-            if "note_font" in self._preview_backdrop.knobs():
+            if (
+                self._edit_backdrop is None
+                and "note_font" in self._preview_backdrop.knobs()
+            ):
                 self._preview_font_name = str(
                     self._preview_backdrop["note_font"].value() or ""
                 )
@@ -669,7 +805,13 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 pass
             self._undo_disabled = False
 
-        for node in self._nodes:
+        for node in nuke.selectedNodes():
+            try:
+                node.setSelected(False)
+            except Exception:
+                pass
+
+        for node in self._initial_selection:
             try:
                 node.setSelected(True)
             except Exception:
@@ -677,6 +819,20 @@ class CreateBackdropDialog(QtWidgets.QDialog):
 
     def _preview_geometries(self):
         values = self.values()
+
+        if self._edit_backdrop is not None and not values["refit_geometry"]:
+            left, top, right, bottom = _node_bounds(self._edit_backdrop)
+            geometry = (left, top, right - left, bottom - top)
+            label = _make_label(
+                values["title"] or "Backdrop preview",
+                geometry,
+                values["font_size"],
+                values["bold"],
+                values["font_name"],
+                values["wrap_title"],
+            )
+            return values, geometry, (1000000000, 1000000000, 1, 1), label
+
         base = _backdrop_geometry(
             self._nodes,
             values["margin_factor"],
@@ -692,12 +848,15 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         aligned = base
 
         if values["align_edges"]:
+            excluded_nodes = self._nodes + [
+                self._preview_backdrop,
+                self._influence_backdrop,
+            ]
+            if self._edit_backdrop is not None:
+                excluded_nodes.append(self._edit_backdrop)
             aligned = _align_backdrop_geometry(
                 base,
-                self._nodes + [
-                    self._preview_backdrop,
-                    self._influence_backdrop,
-                ]
+                excluded_nodes
             )
 
         label = _make_label(
@@ -898,6 +1057,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             ),
             "appearance": self.appearance_combo.currentText(),
             "rgb": self.selected_rgb(),
+            "refit_geometry": self.refit_geometry_checkbox.isChecked(),
         }
 
 
@@ -922,17 +1082,36 @@ def _nuke_main_window():
 
 
 def create_backdrop():
-    """Open the options window and create a backdrop around selected nodes."""
-    nodes = [
+    """Create a backdrop, or edit the single selected Backdrop in place."""
+    selected_nodes = [
         node for node in nuke.selectedNodes()
         if node.Class() != "Viewer"
     ]
 
-    if not nodes:
+    if not selected_nodes:
         nuke.message("Select at least one node to create a backdrop.")
         return None
 
-    dialog = CreateBackdropDialog(nodes, parent=_nuke_main_window())
+    selected_backdrops = [
+        node for node in selected_nodes
+        if node.Class() == "BackdropNode"
+    ]
+
+    if len(selected_backdrops) > 1:
+        nuke.message("Select only one backdrop to edit it.")
+        return None
+
+    edit_backdrop = selected_backdrops[0] if selected_backdrops else None
+    nodes = (
+        _nodes_inside_backdrop(edit_backdrop)
+        if edit_backdrop is not None
+        else selected_nodes
+    )
+    dialog = CreateBackdropDialog(
+        nodes,
+        parent=_nuke_main_window(),
+        edit_backdrop=edit_backdrop,
+    )
 
     try:
         result = dialog.exec()
@@ -942,16 +1121,29 @@ def create_backdrop():
 
     if values is None:
         return None
-    xpos, ypos, width, height = _backdrop_geometry(
-        nodes,
-        values["margin_factor"],
-        values["font_size"]
+
+    preserve_geometry = edit_backdrop is not None and (
+        not nodes or not values["refit_geometry"]
     )
 
-    if values["align_edges"]:
+    if preserve_geometry:
+        left, top, right, bottom = _node_bounds(edit_backdrop)
+        xpos, ypos = left, top
+        width, height = right - left, bottom - top
+    else:
+        xpos, ypos, width, height = _backdrop_geometry(
+            nodes,
+            values["margin_factor"],
+            values["font_size"]
+        )
+
+    if values["align_edges"] and nodes:
+        excluded_nodes = list(nodes)
+        if edit_backdrop is not None:
+            excluded_nodes.append(edit_backdrop)
         xpos, ypos, width, height = _align_backdrop_geometry(
             (xpos, ypos, width, height),
-            nodes
+            excluded_nodes
         )
     label = _make_label(
         values["title"],
@@ -961,11 +1153,15 @@ def create_backdrop():
         values["font_name"],
         values["wrap_title"],
     )
-    xpos, ypos, width, height = _make_room_for_label(
-        (xpos, ypos, width, height), label, values["font_size"]
-    )
+    if not preserve_geometry:
+        xpos, ypos, width, height = _make_room_for_label(
+            (xpos, ypos, width, height), label, values["font_size"]
+        )
     undo = nuke.Undo()
-    undo.begin("Create QTools Backdrop")
+    undo.begin(
+        "Edit QTools Backdrop" if edit_backdrop is not None
+        else "Create QTools Backdrop"
+    )
 
     try:
         families = _family_registry()
@@ -976,28 +1172,28 @@ def create_backdrop():
             )
             _save_family_registry(families)
 
-        backdrop = nuke.nodes.BackdropNode(
-            xpos=xpos,
-            ypos=ypos,
-            bdwidth=width,
-            bdheight=height,
-            label=label,
-            note_font_size=values["font_size"],
-            tile_color=_packed_colour(values["rgb"]),
-            note_font_color=_contrast_colour(values["rgb"]),
-            z_order=_next_backdrop_z_order(),
+        if edit_backdrop is None:
+            backdrop = nuke.nodes.BackdropNode(
+                z_order=_next_backdrop_z_order(),
+            )
+        else:
+            backdrop = edit_backdrop
+
+        backdrop["label"].setValue(label)
+        backdrop["note_font_size"].setValue(values["font_size"])
+        backdrop["tile_color"].setValue(_packed_colour(values["rgb"]))
+        backdrop["note_font_color"].setValue(
+            _contrast_colour(values["rgb"])
         )
 
         if "appearance" in backdrop.knobs():
             backdrop["appearance"].setValue(values["appearance"])
 
-        if values["bold"] and "note_font" in backdrop.knobs():
-            font_name = str(backdrop["note_font"].value() or "")
-
-            if "bold" not in font_name.lower():
-                backdrop["note_font"].setValue(
-                    "{} Bold".format(font_name).strip()
-                )
+        if "note_font" in backdrop.knobs():
+            font_name = _base_font_name(values["font_name"])
+            if values["bold"]:
+                font_name = "{} Bold".format(font_name).strip()
+            backdrop["note_font"].setValue(font_name)
 
         if "border_width" in backdrop.knobs():
             backdrop["border_width"].setValue(
