@@ -11,7 +11,7 @@ groups_menu.addCommand(
     "from qtools import cg_to_film; cg_to_film.create_group()",
 )
 
-nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools")
+nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools", "qtools.svg")
 
 nodes_qtools_menu.addCommand(
     "CG To Film",

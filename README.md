@@ -23,6 +23,137 @@ ln -s ~/.nuke/QTools/setup/nuke_init.py ~/.nuke/init.py
 Restart Nuke after changing startup files. A **QTools** menu will appear in the
 main Nuke menu bar.
 
+## Install on a new Windows machine
+
+These steps install Git, create a new SSH key for GitHub, and install QTools in
+your Nuke user folder. Run commands in **PowerShell** unless a step says to use
+an Administrator window.
+
+### 1. Install Git
+
+Open PowerShell and run:
+
+```powershell
+winget install --id Git.Git -e --source winget
+```
+
+Close and reopen PowerShell, then check that Git is available:
+
+```powershell
+git --version
+```
+
+If `winget` is unavailable, download the installer from the
+[official Git for Windows page](https://git-scm.com/install/windows).
+
+### 2. Set your Git identity
+
+Use the name and email associated with your GitHub account:
+
+```powershell
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+### 3. Create an SSH key
+
+Replace the example email, then accept the default file location when asked.
+Adding a passphrase is recommended.
+
+```powershell
+ssh-keygen -t ed25519 -C "you@example.com"
+```
+
+Never share the private file `id_ed25519`. Only the `.pub` file is added to
+GitHub.
+
+### 4. Optional: start the Windows SSH agent
+
+The SSH agent remembers a key's passphrase. You can skip this step and enter
+the passphrase when Git asks for it.
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+Get-Service -Name ssh-agent | Set-Service -StartupType Automatic
+Start-Service ssh-agent
+```
+
+Close the Administrator window. In a normal PowerShell window, run:
+
+```powershell
+ssh-add "$env:USERPROFILE\.ssh\id_ed25519"
+git config --global core.sshCommand "C:/Windows/System32/OpenSSH/ssh.exe"
+```
+
+The second command ensures Git for Windows uses the same SSH agent.
+
+### 5. Add the public key to GitHub
+
+Copy the public key:
+
+```powershell
+Get-Content "$env:USERPROFILE\.ssh\id_ed25519.pub" | Set-Clipboard
+```
+
+In GitHub, open **Settings > SSH and GPG keys > New SSH key**, give the new
+machine a descriptive title, keep **Authentication Key** selected, paste the
+key, and click **Add SSH key**. See
+[GitHub's SSH-key instructions](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account).
+
+Test the connection:
+
+```powershell
+ssh -T git@github.com
+```
+
+Type `yes` if asked to trust GitHub's host key. A successful test says that
+you authenticated successfully (GitHub does not provide shell access).
+
+### 6. Clone and enable QTools in Nuke
+
+Choose the exact folder where you want the repository. For a network location,
+prefer its UNC path (for example `\\server\share`) because it does not depend on
+a mapped drive letter. Replace the example path in this command with yours:
+
+```powershell
+git clone git@github.com:kweninlondon/Nuke_QTools.git "\\server\share\Nuke_QTools"
+```
+
+You can also use a mapped drive or a local folder, for example:
+
+```powershell
+git clone git@github.com:kweninlondon/Nuke_QTools.git "Q:\Tools\Nuke_QTools"
+```
+
+Create Nuke's user folder if necessary, then open its `init.py`:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.nuke"
+notepad "$env:USERPROFILE\.nuke\init.py"
+```
+
+If Notepad asks to create the file, choose **Yes**. Add the following lines,
+replacing the example with the same repository path used above. If `init.py`
+already contains other setup, keep it and add these lines at the end:
+
+```python
+import nuke
+nuke.pluginAddPath(r"\\server\share\Nuke_QTools")
+```
+
+For a mapped drive, use forward slashes, for example
+`nuke.pluginAddPath("Q:/Tools/Nuke_QTools")`.
+
+Restart Nuke. A **QTools** menu should appear in the main menu bar.
+
+### Updating QTools later
+
+```powershell
+Set-Location "\\server\share\Nuke_QTools"
+git pull
+```
+
 ## Install CG To Film
 
 CG To Film is bundled as `groups/CGTOFILM.nk`. Restart Nuke, then use either

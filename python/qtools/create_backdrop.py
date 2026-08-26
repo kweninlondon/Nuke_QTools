@@ -36,8 +36,6 @@ COLOUR_METHODS = [
     ("Text similarity - Related", "similarity"),
 ]
 FAMILY_ROOT_KNOB = "qtools_backdrop_families"
-FAMILY_NODE_KNOB = "qtools_colour_family"
-FAMILY_COLOUR_KNOB = "qtools_family_colour"
 
 # Familiar departments retain intuitive base families. All other first words
 # are assigned a stable hue from their text.
@@ -126,7 +124,7 @@ def _unpacked_colour(value):
 
 
 def _family_registry():
-    """Read per-script family colours, recovering copied backdrop metadata."""
+    """Read the per-script backdrop colour-family registry."""
     families = {}
     root = nuke.root()
 
@@ -136,20 +134,6 @@ def _family_registry():
             families.update(payload.get("families", payload))
         except (TypeError, ValueError):
             pass
-
-    for backdrop in nuke.allNodes("BackdropNode"):
-        knobs = backdrop.knobs()
-
-        if FAMILY_NODE_KNOB not in knobs or FAMILY_COLOUR_KNOB not in knobs:
-            continue
-
-        family = _normalise_title(backdrop[FAMILY_NODE_KNOB].value())
-
-        if family and family not in families:
-            try:
-                families[family] = int(backdrop[FAMILY_COLOUR_KNOB].value())
-            except (TypeError, ValueError):
-                continue
 
     return families
 
@@ -166,15 +150,6 @@ def _save_family_registry(families):
         "version": 1,
         "families": families,
     }, sort_keys=True))
-
-
-def _add_hidden_string_knob(node, name, value):
-    if name not in node.knobs():
-        knob = nuke.String_Knob(name, name)
-        knob.setVisible(False)
-        node.addKnob(knob)
-
-    node[name].setValue(str(value))
 
 
 def _matching_family(title, families):
@@ -1001,7 +976,6 @@ def create_backdrop():
             )
             _save_family_registry(families)
 
-        active_family = _matching_family(values["title"], families)
         backdrop = nuke.nodes.BackdropNode(
             xpos=xpos,
             ypos=ypos,
@@ -1013,16 +987,6 @@ def create_backdrop():
             note_font_color=_contrast_colour(values["rgb"]),
             z_order=_next_backdrop_z_order(),
         )
-
-        if active_family:
-            _add_hidden_string_knob(
-                backdrop, FAMILY_NODE_KNOB, active_family
-            )
-            _add_hidden_string_knob(
-                backdrop,
-                FAMILY_COLOUR_KNOB,
-                families[active_family],
-            )
 
         if "appearance" in backdrop.knobs():
             backdrop["appearance"].setValue(values["appearance"])
