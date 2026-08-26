@@ -372,22 +372,6 @@ def _nodes_inside_backdrop(backdrop):
     return contained
 
 
-def _inferred_margin_factor(backdrop, nodes):
-    """Estimate the tool margin used to create an existing backdrop."""
-    if not nodes:
-        return 1.0
-
-    left, _top, right, bottom = _node_bounds(backdrop)
-    bounds = [_node_bounds(node) for node in nodes]
-    padding = sorted([
-        max(0, min(item[0] for item in bounds) - left),
-        max(0, right - max(item[2] for item in bounds)),
-        max(0, bottom - max(item[3] for item in bounds)),
-    ])
-    margin = padding[len(padding) // 2]
-    return max(0.0, min(5.0, margin / float(_average_node_size(nodes))))
-
-
 def _base_font_name(font_name):
     """Remove a Bold style token while preserving the rest of a font name."""
     return " ".join(
@@ -835,9 +819,6 @@ class CreateBackdropDialog(QtWidgets.QDialog):
 
         self.auto_colour_checkbox.setChecked(False)
         self._manual_rgb = _unpacked_colour(backdrop["tile_color"].value())
-        self.margin_field.setValue(
-            _inferred_margin_factor(backdrop, self._nodes)
-        )
 
         if not self._nodes:
             self.refit_geometry_checkbox.setChecked(False)
