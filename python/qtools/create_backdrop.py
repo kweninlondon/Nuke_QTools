@@ -526,10 +526,12 @@ def _fit_title(
 
     if layout_mode == "single":
         required_width = full_width + 24.0
+        fitted_width = max(width, required_width)
+        horizontal_growth = fitted_width - width
         fitted_geometry = (
-            left,
+            left - horizontal_growth * 0.5,
             top,
-            max(width, required_width),
+            fitted_width,
             height,
         )
         if geometry_validator is None or geometry_validator(fitted_geometry):
@@ -566,7 +568,7 @@ def _fit_title(
         horizontal_growth = (candidate_width - width) / max(1.0, width)
         score = aspect_change + 0.15 * area_growth - 0.03 * horizontal_growth
         candidate_geometry = (
-            left,
+            left - (candidate_width - width) * 0.5,
             top - extra_height,
             candidate_width,
             candidate_height,
@@ -799,14 +801,6 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self.bold_checkbox.setToolTip(
             "Use the bold variant of Nuke's backdrop font."
         )
-        text_widget = QtWidgets.QWidget()
-        text_layout = QtWidgets.QHBoxLayout(text_widget)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.addWidget(self.text_size_combo)
-        text_layout.addWidget(self.bold_checkbox)
-        text_layout.addStretch()
-        form.addRow("Text:", text_widget)
-
         self.title_layout_combo = QtWidgets.QComboBox()
         self.title_layout_combo.addItem("Adaptive", "adaptive")
         self.title_layout_combo.addItem("Single line", "single")
@@ -824,7 +818,15 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "Adaptive balances horizontal and vertical growth. Single line "
             "keeps the title on one line and expands width when necessary."
         )
-        form.addRow("Title fitting:", self.title_layout_combo)
+        text_widget = QtWidgets.QWidget()
+        text_layout = QtWidgets.QHBoxLayout(text_widget)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.addWidget(self.text_size_combo)
+        text_layout.addWidget(self.bold_checkbox)
+        text_layout.addStretch()
+        text_layout.addWidget(QtWidgets.QLabel("Fitting:"))
+        text_layout.addWidget(self.title_layout_combo)
+        form.addRow("Text:", text_widget)
 
         self.appearance_combo = QtWidgets.QComboBox()
         self.appearance_combo.addItems(["Fill", "Border"])
@@ -1182,13 +1184,6 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             values["margin_factor"],
             values["font_size"]
         )
-        left, top, width, height = base
-        influence = (
-            left - width * 0.5,
-            top - height * 0.5,
-            width * 2.0,
-            height * 2.0,
-        )
         aligned = base
         excluded_nodes = self._nodes + [self._preview_backdrop]
         if self._influence_backdrop is not None:
@@ -1239,6 +1234,19 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 ),
                 aligned,
             )
+
+        # Title fitting can move both horizontal edges. Re-evaluate nearby
+        # Backdrops from that new footprint so newly close edges can snap.
+        if values["align_edges"]:
+            aligned = _align_backdrop_geometry(aligned, excluded_nodes)
+
+        left, top, width, height = aligned
+        influence = (
+            left - width * 0.5,
+            top - height * 0.5,
+            width * 2.0,
+            height * 2.0,
+        )
 
         return values, aligned, influence, label
 
@@ -1555,6 +1563,15 @@ def create_backdrop():
             xpos, ypos, width, height = _expanded_geometry(
                 (left, top, right - left, bottom - top),
                 (xpos, ypos, width, height),
+            )
+
+        # Match the live preview: title-driven growth may bring either side
+        # within range of another Backdrop, so align once more from the final
+        # expanded footprint.
+        if values["align_edges"] and nodes:
+            xpos, ypos, width, height = _align_backdrop_geometry(
+                (xpos, ypos, width, height),
+                excluded_nodes,
             )
     undo = nuke.Undo()
     undo.begin(
