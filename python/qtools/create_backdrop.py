@@ -351,13 +351,15 @@ def _restore_graph_positions(positions):
             pass
 
 
-def _nodes_inside_backdrop(backdrop):
-    """Return non-Backdrop nodes fully contained by a backdrop."""
+def _nodes_inside_backdrop(backdrop, include_backdrops=False):
+    """Return nodes fully contained by a backdrop."""
     left, top, right, bottom = _node_bounds(backdrop)
     contained = []
 
     for node in nuke.allNodes():
-        if node is backdrop or node.Class() in {"BackdropNode", "Viewer"}:
+        if node is backdrop or node.Class() == "Viewer":
+            continue
+        if not include_backdrops and node.Class() == "BackdropNode":
             continue
 
         node_left, node_top, node_right, node_bottom = _node_bounds(node)
@@ -844,19 +846,19 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 [self._edit_backdrop] if self._edit_backdrop is not None else []
             )
             z_order = _next_backdrop_z_order()
+            self._influence_backdrop = nuke.nodes.BackdropNode(
+                label="Zone of influence (50%)",
+                tile_color=0x808080FF,
+                note_font_color=0xFFFFFFFF,
+                note_font_size=50,
+                z_order=z_order - 1,
+            )
             if self._edit_backdrop is not None:
                 self._edit_snapshot = self._capture_backdrop_state(
                     self._edit_backdrop
                 )
                 self._preview_backdrop = self._edit_backdrop
             else:
-                self._influence_backdrop = nuke.nodes.BackdropNode(
-                    label="Zone of influence (50%)",
-                    tile_color=0x808080FF,
-                    note_font_color=0xFFFFFFFF,
-                    note_font_size=50,
-                    z_order=z_order - 1,
-                )
                 self._preview_backdrop = nuke.nodes.BackdropNode(
                     z_order=z_order,
                 )
@@ -1265,12 +1267,21 @@ def create_backdrop():
         node for node in selected_nodes
         if node.Class() == "BackdropNode"
     ]
+    edit_backdrop = None
 
-    if len(selected_backdrops) > 1:
-        nuke.message("Select only one backdrop to edit it.")
-        return None
+    if len(selected_backdrops) == 1:
+        candidate = selected_backdrops[0]
+        candidate_children = set(
+            _nodes_inside_backdrop(candidate, include_backdrops=True)
+        )
+        selected_set = set(selected_nodes)
 
-    edit_backdrop = selected_backdrops[0] if selected_backdrops else None
+        if (
+            selected_set == {candidate}
+            or selected_set == candidate_children | {candidate}
+        ):
+            edit_backdrop = candidate
+
     nodes = (
         _nodes_inside_backdrop(edit_backdrop)
         if edit_backdrop is not None
