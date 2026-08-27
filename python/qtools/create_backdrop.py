@@ -1466,8 +1466,9 @@ def _nuke_main_window():
 
 def create_backdrop():
     """Create a backdrop, or edit the single selected Backdrop in place."""
+    initial_selection = list(nuke.selectedNodes())
     selected_nodes = [
-        node for node in nuke.selectedNodes()
+        node for node in initial_selection
         if node.Class() != "Viewer"
     ]
 
@@ -1631,6 +1632,11 @@ def create_backdrop():
 
         for node in nuke.selectedNodes():
             node.setSelected(False)
+        for node in initial_selection:
+            try:
+                node.setSelected(True)
+            except Exception:
+                pass
         backdrop.setSelected(True)
         return backdrop
     finally:
