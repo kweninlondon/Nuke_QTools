@@ -292,11 +292,12 @@ def _average_node_size(nodes):
     return max(40, min(160, int(round(median))))
 
 
-def _backdrop_geometry(nodes, margin_factor, font_size):
+def _backdrop_geometry(nodes, margin_factor, font_size, has_title=True):
     margin = int(round(_average_node_size(nodes) * margin_factor))
     bounds = [_node_bounds(node) for node in nodes]
     left = min(item[0] for item in bounds) - margin
-    top = min(item[1] for item in bounds) - margin - font_size - 18
+    title_space = font_size + 18 if has_title else 0
+    top = min(item[1] for item in bounds) - margin - title_space
     right = max(item[2] for item in bounds) + margin
     bottom = max(item[3] for item in bounds) + margin
     return left, top, right - left, bottom - top
@@ -702,41 +703,38 @@ def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
         top_candidates.append((other_top, vertical_tolerance))
         bottom_candidates.append((other_bottom, vertical_tolerance))
 
-    aligned_left = _closest_outward_edge(left, left_candidates, -1)
-    aligned_right = _closest_outward_edge(right, right_candidates, 1)
-    aligned_top = _closest_outward_edge(top, top_candidates, -1)
-    aligned_bottom = _closest_outward_edge(bottom, bottom_candidates, 1)
-
     original_bounds = (left, top, right, bottom)
 
-    # Parallel edges may share an X or Y coordinate only while the Backdrops
-    # remain separated. Reject boundary contact, overlap, or new containment.
-    # Existing intentional nesting remains valid.
-    for other_bounds in nearby_bounds:
-        aligned_bounds = (
-            aligned_left,
-            aligned_top,
-            aligned_right,
-            aligned_bottom,
-        )
+    def valid_bounds(candidate_bounds):
+        for other_bounds in nearby_bounds:
+            originally_nested = (
+                _bounds_contain(original_bounds, other_bounds)
+                or _bounds_contain(other_bounds, original_bounds)
+            )
+            if (
+                _bounds_intersect(candidate_bounds, other_bounds)
+                and not originally_nested
+            ):
+                return False
+        return True
 
-        originally_nested = (
-            _bounds_contain(original_bounds, other_bounds)
-            or _bounds_contain(other_bounds, original_bounds)
-        )
+    aligned_bounds = [left, top, right, bottom]
+    proposals = (
+        (0, _closest_outward_edge(left, left_candidates, -1)),
+        (2, _closest_outward_edge(right, right_candidates, 1)),
+        (1, _closest_outward_edge(top, top_candidates, -1)),
+        (3, _closest_outward_edge(bottom, bottom_candidates, 1)),
+    )
 
-        if (
-            _bounds_intersect(aligned_bounds, other_bounds)
-            and not originally_nested
-        ):
-            if aligned_left < left and other_bounds[0] < left:
-                aligned_left = left
-            if aligned_top < top and other_bounds[1] < top:
-                aligned_top = top
-            if aligned_right > right and other_bounds[2] > right:
-                aligned_right = right
-            if aligned_bottom > bottom and other_bounds[3] > bottom:
-                aligned_bottom = bottom
+    # Validate each edge independently. An unsafe vertical expansion must not
+    # cancel a valid horizontal alignment (or vice versa).
+    for edge_index, candidate in proposals:
+        proposed_bounds = list(aligned_bounds)
+        proposed_bounds[edge_index] = candidate
+        if valid_bounds(tuple(proposed_bounds)):
+            aligned_bounds = proposed_bounds
+
+    aligned_left, aligned_top, aligned_right, aligned_bottom = aligned_bounds
 
     return (
         aligned_left,
@@ -1182,7 +1180,8 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         base = _backdrop_geometry(
             self._nodes,
             values["margin_factor"],
-            values["font_size"]
+            values["font_size"],
+            has_title=bool(values["title"]),
         )
         aligned = base
         excluded_nodes = self._nodes + [self._preview_backdrop]
@@ -1527,7 +1526,8 @@ def create_backdrop():
         xpos, ypos, width, height = _backdrop_geometry(
             nodes,
             values["margin_factor"],
-            values["font_size"]
+            values["font_size"],
+            has_title=bool(values["title"]),
         )
 
     excluded_nodes = list(nodes)
