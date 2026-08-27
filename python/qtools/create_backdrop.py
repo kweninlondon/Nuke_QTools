@@ -4,6 +4,7 @@ import colorsys
 import difflib
 import hashlib
 import json
+import math
 import re
 
 import nuke
@@ -423,11 +424,165 @@ def _wrap_title(title, backdrop_width, font_size, bold=False, font_name=""):
     return "\n".join(lines)
 
 
-def _make_label(title, geometry, font_size, bold, font_name, wrap_title):
-    if not wrap_title:
-        return title
+def _text_width(text, font_size, bold=False, font_name=""):
+    metrics = QtGui.QFontMetricsF(
+        _label_font(font_name, font_size, bold)
+    )
+    if hasattr(metrics, "horizontalAdvance"):
+        return float(metrics.horizontalAdvance(str(text)))
+    return float(metrics.width(str(text)))
 
-    return _wrap_title(title, geometry[2], font_size, bold, font_name)
+
+def _balanced_title_lines(title, line_count, font_size, bold, font_name):
+    """Split words into a fixed number of balanced contiguous lines."""
+    words = str(title).split()
+    line_count = max(1, min(int(line_count), len(words)))
+    widths = {
+        (start, end): _text_width(
+            " ".join(words[start:end]), font_size, bold, font_name
+        )
+        for start in range(len(words))
+        for end in range(start + 1, len(words) + 1)
+    }
+    states = {(0, 0): (0.0, [])}
+
+    for lines_used in range(line_count):
+        for end in range(len(words) + 1):
+            state = states.get((lines_used, end))
+            if state is None:
+                continue
+            current_max, breaks = state
+            remaining_lines = line_count - lines_used - 1
+            maximum_next = len(words) - remaining_lines
+
+            for next_end in range(end + 1, maximum_next + 1):
+                candidate_max = max(current_max, widths[(end, next_end)])
+                key = (lines_used + 1, next_end)
+                existing = states.get(key)
+                if existing is None or candidate_max < existing[0]:
+                    states[key] = (candidate_max, breaks + [next_end])
+
+    breaks = states[(line_count, len(words))][1]
+    lines = []
+    start = 0
+    for end in breaks:
+        lines.append(" ".join(words[start:end]))
+        start = end
+    return lines
+
+
+def _near_fit_font_size(title, available_width, font_size, bold, font_name):
+    """Return a fitting size within 10% of the requested size, if possible."""
+    minimum_size = max(1, int(round(float(font_size) * 0.90)))
+
+    for candidate in range(int(font_size) - 1, minimum_size - 1, -1):
+        if _text_width(title, candidate, bold, font_name) <= available_width:
+            return candidate
+
+    return None
+
+
+def _fit_title(
+    title,
+    geometry,
+    font_size,
+    bold,
+    font_name,
+    layout_mode,
+    alignment_priority=False,
+    allow_resize=True,
+    geometry_validator=None,
+):
+    """Fit a title while balancing horizontal and vertical growth."""
+    title = " ".join(str(title).split())
+    font_size = int(font_size)
+
+    if not title:
+        return "", geometry, font_size
+
+    available_width = max(1.0, float(geometry[2]) - 24.0)
+    full_width = _text_width(title, font_size, bold, font_name)
+
+    if full_width <= available_width:
+        return title, geometry, font_size
+
+    if alignment_priority:
+        fitted_size = _near_fit_font_size(
+            title, available_width, font_size, bold, font_name
+        )
+        if fitted_size is not None:
+            return title, geometry, fitted_size
+
+    if not allow_resize:
+        if layout_mode == "adaptive":
+            return (
+                _wrap_title(title, geometry[2], font_size, bold, font_name),
+                geometry,
+                font_size,
+            )
+        return title, geometry, font_size
+
+    left, top, width, height = geometry
+
+    if layout_mode == "single":
+        required_width = full_width + 24.0
+        fitted_geometry = (
+            left,
+            top,
+            max(width, required_width),
+            height,
+        )
+        if geometry_validator is None or geometry_validator(fitted_geometry):
+            return title, fitted_geometry, font_size
+        return title, geometry, font_size
+
+    if alignment_priority:
+        label = _wrap_title(title, width, font_size, bold, font_name)
+        fitted_geometry = _make_room_for_label(geometry, label, font_size)
+        if geometry_validator is None or geometry_validator(fitted_geometry):
+            return label, fitted_geometry, font_size
+
+    words = title.split()
+    original_aspect = max(1.0, width) / max(1.0, height)
+    original_area = max(1.0, width * height)
+    candidates = []
+
+    for line_count in range(1, len(words) + 1):
+        lines = _balanced_title_lines(
+            title, line_count, font_size, bold, font_name
+        )
+        required_width = max(
+            _text_width(line, font_size, bold, font_name)
+            for line in lines
+        ) + 24.0
+        candidate_width = max(float(width), required_width)
+        extra_height = (len(lines) - 1) * (font_size + 4)
+        candidate_height = float(height) + extra_height
+        candidate_aspect = candidate_width / max(1.0, candidate_height)
+        aspect_change = abs(math.log(candidate_aspect / original_aspect))
+        area_growth = (
+            candidate_width * candidate_height - original_area
+        ) / original_area
+        horizontal_growth = (candidate_width - width) / max(1.0, width)
+        score = aspect_change + 0.15 * area_growth - 0.03 * horizontal_growth
+        candidate_geometry = (
+            left,
+            top - extra_height,
+            candidate_width,
+            candidate_height,
+        )
+        if geometry_validator is None or geometry_validator(candidate_geometry):
+            candidates.append((
+                score,
+                "\n".join(lines),
+                candidate_geometry,
+            ))
+
+    if not candidates:
+        return title, geometry, font_size
+
+    _score, label, fitted_geometry = min(candidates, key=lambda item: item[0])
+    return label, fitted_geometry, font_size
 
 
 def _make_room_for_label(geometry, label, font_size):
@@ -476,6 +631,29 @@ def _bounds_intersect(first, second):
         and first[1] <= second[3]
         and first[3] >= second[1]
     )
+
+
+def _geometry_avoids_backdrops(geometry, ignored_nodes, original=None):
+    """Reject title growth that touches or intersects unrelated Backdrops."""
+    left, top, width, height = geometry
+    candidate_bounds = (left, top, left + width, top + height)
+    ignored_nodes = set(ignored_nodes)
+
+    for backdrop in nuke.allNodes("BackdropNode"):
+        if backdrop in ignored_nodes:
+            continue
+        other_bounds = _node_bounds(backdrop)
+
+        if original is not None and (
+            _bounds_contain(original, other_bounds)
+            or _bounds_contain(other_bounds, original)
+        ):
+            continue
+
+        if _bounds_intersect(candidate_bounds, other_bounds):
+            return False
+
+    return True
 
 
 def _align_backdrop_geometry(geometry, selected_nodes, tolerance_ratio=0.50):
@@ -629,17 +807,24 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         text_layout.addStretch()
         form.addRow("Text:", text_widget)
 
-        self.wrap_title_checkbox = QtWidgets.QCheckBox(
-            "Wrap title to fit backdrop"
+        self.title_layout_combo = QtWidgets.QComboBox()
+        self.title_layout_combo.addItem("Adaptive", "adaptive")
+        self.title_layout_combo.addItem("Single line", "single")
+        saved_title_layout = str(
+            _settings().value(
+                "title_layout",
+                "adaptive" if _setting_bool("wrap_title", True) else "single",
+            )
         )
-        self.wrap_title_checkbox.setChecked(
-            _setting_bool("wrap_title", True)
+        layout_index = self.title_layout_combo.findData(saved_title_layout)
+        self.title_layout_combo.setCurrentIndex(
+            layout_index if layout_index >= 0 else 0
         )
-        self.wrap_title_checkbox.setToolTip(
-            "Move whole words onto new lines when the title is wider than "
-            "the backdrop."
+        self.title_layout_combo.setToolTip(
+            "Adaptive balances horizontal and vertical growth. Single line "
+            "keeps the title on one line and expands width when necessary."
         )
-        form.addRow("Title layout:", self.wrap_title_checkbox)
+        form.addRow("Title fitting:", self.title_layout_combo)
 
         self.appearance_combo = QtWidgets.QComboBox()
         self.appearance_combo.addItems(["Fill", "Border"])
@@ -766,7 +951,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             self._update_graph_preview
         )
         self.bold_checkbox.toggled.connect(self._update_graph_preview)
-        self.wrap_title_checkbox.toggled.connect(self._update_graph_preview)
+        self.title_layout_combo.currentIndexChanged.connect(
+            self._update_graph_preview
+        )
         self.appearance_combo.currentTextChanged.connect(
             self._update_graph_preview
         )
@@ -809,9 +996,10 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         )
         self._preview_font_name = _base_font_name(font_name)
         self.bold_checkbox.setChecked("bold" in font_name.lower())
-        self.wrap_title_checkbox.setChecked(
-            "\n" in label or _setting_bool("wrap_title", True)
-        )
+        if "\n" in label:
+            self.title_layout_combo.setCurrentIndex(
+                self.title_layout_combo.findData("adaptive")
+            )
 
         if "appearance" in knobs:
             appearance = str(backdrop["appearance"].value())
@@ -976,14 +1164,17 @@ class CreateBackdropDialog(QtWidgets.QDialog):
                 state["bdwidth"],
                 state["bdheight"],
             )
-            label = _make_label(
+            label, geometry, rendered_font_size = _fit_title(
                 values["title"],
                 geometry,
                 values["font_size"],
                 values["bold"],
                 values["font_name"],
-                values["wrap_title"],
+                values["title_layout"],
+                alignment_priority=values["align_edges"],
+                allow_resize=False,
             )
+            values["rendered_font_size"] = rendered_font_size
             return values, geometry, (1000000000, 1000000000, 1, 1), label
 
         base = _backdrop_geometry(
@@ -999,31 +1190,43 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             height * 2.0,
         )
         aligned = base
+        excluded_nodes = self._nodes + [self._preview_backdrop]
+        if self._influence_backdrop is not None:
+            excluded_nodes.append(self._influence_backdrop)
+        if self._edit_backdrop is not None:
+            excluded_nodes.append(self._edit_backdrop)
 
         if values["align_edges"]:
-            excluded_nodes = self._nodes + [
-                self._preview_backdrop,
-            ]
-            if self._influence_backdrop is not None:
-                excluded_nodes.append(self._influence_backdrop)
-            if self._edit_backdrop is not None:
-                excluded_nodes.append(self._edit_backdrop)
             aligned = _align_backdrop_geometry(
                 base,
                 excluded_nodes
             )
 
-        label = _make_label(
+        original_bounds = None
+        if self._edit_snapshot is not None:
+            state = self._edit_snapshot
+            original_bounds = (
+                state["xpos"],
+                state["ypos"],
+                state["xpos"] + state["bdwidth"],
+                state["ypos"] + state["bdheight"],
+            )
+
+        label, aligned, rendered_font_size = _fit_title(
             values["title"],
             aligned,
             values["font_size"],
             values["bold"],
             values["font_name"],
-            values["wrap_title"],
+            values["title_layout"],
+            alignment_priority=values["align_edges"],
+            geometry_validator=lambda geometry: _geometry_avoids_backdrops(
+                geometry,
+                excluded_nodes,
+                original_bounds,
+            ),
         )
-        aligned = _make_room_for_label(
-            aligned, label, values["font_size"]
-        )
+        values["rendered_font_size"] = rendered_font_size
 
         if self._edit_backdrop is not None:
             state = self._edit_snapshot
@@ -1058,7 +1261,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         if self._influence_backdrop is not None:
             self._influence_backdrop.setSelected(False)
         preview["label"].setValue(label)
-        preview["note_font_size"].setValue(values["font_size"])
+        preview["note_font_size"].setValue(values["rendered_font_size"])
         preview["tile_color"].setValue(_packed_colour(values["rgb"]))
         preview["note_font_color"].setValue(
             _contrast_colour(values["rgb"])
@@ -1199,7 +1402,9 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         settings.setValue("align_edges", self.align_edges_checkbox.isChecked())
         settings.setValue("text_size", self.text_size_combo.currentData())
         settings.setValue("bold", self.bold_checkbox.isChecked())
-        settings.setValue("wrap_title", self.wrap_title_checkbox.isChecked())
+        title_layout = self.title_layout_combo.currentData()
+        settings.setValue("title_layout", title_layout)
+        settings.setValue("wrap_title", title_layout == "adaptive")
         settings.setValue("appearance", self.appearance_combo.currentText())
         settings.setValue("palette", self.palette_combo.currentText())
         settings.setValue("auto_colour", self.auto_colour_checkbox.isChecked())
@@ -1214,7 +1419,7 @@ class CreateBackdropDialog(QtWidgets.QDialog):
             "align_edges": self.align_edges_checkbox.isChecked(),
             "font_size": int(self.text_size_combo.currentData()),
             "bold": self.bold_checkbox.isChecked(),
-            "wrap_title": self.wrap_title_checkbox.isChecked(),
+            "title_layout": self.title_layout_combo.currentData(),
             "font_name": self._preview_font_name,
             "family": (
                 self._pending_family
@@ -1317,26 +1522,34 @@ def create_backdrop():
             values["font_size"]
         )
 
+    excluded_nodes = list(nodes)
+    original_bounds = None
+    if edit_backdrop is not None:
+        excluded_nodes.append(edit_backdrop)
+        original_bounds = _node_bounds(edit_backdrop)
+
     if values["align_edges"] and nodes:
-        excluded_nodes = list(nodes)
-        if edit_backdrop is not None:
-            excluded_nodes.append(edit_backdrop)
         xpos, ypos, width, height = _align_backdrop_geometry(
             (xpos, ypos, width, height),
             excluded_nodes
         )
-    label = _make_label(
+    label, fitted_geometry, rendered_font_size = _fit_title(
         values["title"],
         (xpos, ypos, width, height),
         values["font_size"],
         values["bold"],
         values["font_name"],
-        values["wrap_title"],
+        values["title_layout"],
+        alignment_priority=values["align_edges"],
+        allow_resize=not preserve_geometry,
+        geometry_validator=lambda geometry: _geometry_avoids_backdrops(
+            geometry,
+            excluded_nodes,
+            original_bounds,
+        ),
     )
     if not preserve_geometry:
-        xpos, ypos, width, height = _make_room_for_label(
-            (xpos, ypos, width, height), label, values["font_size"]
-        )
+        xpos, ypos, width, height = fitted_geometry
         if edit_backdrop is not None:
             left, top, right, bottom = _node_bounds(edit_backdrop)
             xpos, ypos, width, height = _expanded_geometry(
@@ -1371,7 +1584,7 @@ def create_backdrop():
             node.setSelected(False)
 
         backdrop["label"].setValue(label)
-        backdrop["note_font_size"].setValue(values["font_size"])
+        backdrop["note_font_size"].setValue(rendered_font_size)
         backdrop["tile_color"].setValue(_packed_colour(values["rgb"]))
         backdrop["note_font_color"].setValue(
             _contrast_colour(values["rgb"])
