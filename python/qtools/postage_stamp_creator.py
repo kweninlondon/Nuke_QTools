@@ -1027,8 +1027,16 @@ class DotNameDialog(QtWidgets.QDialog):
         self.use_colour_checkbox.setToolTip(
             "Colour the Dot from its prefix rule; connected stamps inherit it."
         )
+        self.create_postage_stamp_checkbox = QtWidgets.QCheckBox(
+            "Create PostageStamp"
+        )
+        self.create_postage_stamp_checkbox.setChecked(True)
+        self.create_postage_stamp_checkbox.setToolTip(
+            "Create a PostageStamp connected to the new Dot."
+        )
         option_layout.addWidget(self.replace_underscores_checkbox)
         option_layout.addWidget(self.use_colour_checkbox)
+        option_layout.addWidget(self.create_postage_stamp_checkbox)
         option_layout.addStretch()
         layout.addLayout(option_layout)
 
@@ -1056,6 +1064,10 @@ class DotNameDialog(QtWidgets.QDialog):
 
         self._auto_prefix()
         self._apply_rule_removals()
+        # Rule removals can leave separators at the beginning of the proposed
+        # name. Trim them only during initial population so subsequent spaces
+        # deliberately entered by the user are left alone.
+        self.name_field.setText(self.name_field.text().lstrip())
         self.name_field.selectAll()
         self.name_field.setFocus()
 
@@ -1067,7 +1079,7 @@ class DotNameDialog(QtWidgets.QDialog):
         frame_name = connector_rules.remove_patterns(frame_name, removals)
         if self.replace_underscores_checkbox.isChecked():
             frame_name = frame_name.replace("_", " ")
-        self.name_field.setText(frame_name)
+        self.name_field.setText(frame_name.lstrip())
 
     def _auto_prefix(self):
         """Populate the prefix from the first filename rule match."""
@@ -1148,18 +1160,23 @@ class DotNameDialog(QtWidgets.QDialog):
         )
         return int(rule["colour"]) if rule is not None else 0
 
+    def should_create_postage_stamp(self):
+        """Return whether a stamp should be created after the Dot."""
+        return self.create_postage_stamp_checkbox.isChecked()
+
 
 def _create_named_read_dot(source):
-    """Ask for a label, then create a visible-input Dot from source."""
+    """Ask for a label, then return the Dot and requested stamp option."""
     dialog = DotNameDialog(
         source,
         parent=_nuke_main_window()
     )
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
-        return None
+        return None, False
 
     dot_name = dialog.dot_name()
+    create_postage_stamp = dialog.should_create_postage_stamp()
     outgoing_connections = _outgoing_connections(source)
     original_source_y = source.ypos()
     _deselect_all()
@@ -1217,7 +1234,7 @@ def _create_named_read_dot(source):
         nuke.message(
             "The Dot could not be connected.\n\n{}".format(error)
         )
-        return None
+        return None, False
 
     if "hide_input" in dot.knobs():
         dot["hide_input"].setValue(False)
@@ -1225,7 +1242,7 @@ def _create_named_read_dot(source):
     dot.setXYpos(target_x, target_y)
     dot.setSelected(True)
 
-    return dot
+    return dot, create_postage_stamp
 
 
 class SourceSelectionDialog(QtWidgets.QDialog):
@@ -1998,12 +2015,16 @@ def _create_from_chosen_source(
         and _setting_bool(SETTING_CREATE_DOT, True)
     ):
         dot = _nearby_from_dot(source)
+        create_postage_stamp = True
 
         if dot is None:
-            dot = _create_named_read_dot(source)
+            dot, create_postage_stamp = _create_named_read_dot(source)
 
         if dot is None:
             return None
+
+        if not create_postage_stamp:
+            return dot
 
         return _create_postage_stamp(
             dot,
@@ -2077,6 +2098,37 @@ def create_or_retarget_postage_stamp():
         )
 
     if selected_nodes:
+        file_sources = [
+            node for node in selected_nodes if _has_file_path(node)
+        ]
+
+        if len(file_sources) > 1 and len(file_sources) == len(selected_nodes):
+            undo = nuke.Undo()
+            undo.begin("Create Postage Stamp Connectors")
+            created = []
+
+            try:
+                for source in file_sources:
+                    connector = _create_from_chosen_source(
+                        source,
+                        frame_new=False
+                    )
+
+                    if connector is not None:
+                        created.append(connector)
+
+                _deselect_all()
+
+                for connector in created:
+                    connector.setSelected(True)
+
+                if created:
+                    nuke.zoomToFitSelected()
+
+                return created
+            finally:
+                undo.end()
+
         try:
             source = nuke.selectedNode()
         except Exception:
