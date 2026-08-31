@@ -114,6 +114,11 @@ utilities_menu.addCommand(
     "from qtools import asset_report; asset_report.show_asset_report()",
 )
 
+utilities_menu.addCommand(
+    "Conform QuickTime FPS",
+    "from qtools import quicktime_retime; quicktime_retime.show_dialog()",
+)
+
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
 
 script_cleanup_menu.addCommand(

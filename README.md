@@ -163,6 +163,15 @@ The command pastes a Group node whose complete internal node graph is stored
 in the current Nuke script. Scripts created this way do not require the
 original QTools asset to reopen CG To Film correctly.
 
+## QuickTime FPS Conform
+
+Select one movie Read node and choose **QTools > Utilities > Conform QuickTime
+FPS**. The tool reads the encoded `input/frame_rate` metadata, compares it with
+the script FPS, and creates a Retime, OFlow, or Kronos node at the calculated
+speed. The output start frame defaults to the Read node's first frame and can
+be changed in the dialog. If a movie does not expose usable FPS metadata, enter
+the source FPS manually in the dialog.
+
 ## Teleport
 
 Teleport shares selected nodes between artists using a common folder. Its
