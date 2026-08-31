@@ -84,6 +84,7 @@ SETTING_CREATE_DOT = "create_dot_for_read"
 SETTING_FIX_DOT_NAME = "fix_dot_name"
 SETTING_USE_COLOUR = "create_dot_use_colour"
 SETTING_REPLACE_UNDERSCORES = "create_dot_replace_underscores"
+SETTING_CREATE_POSTAGE_STAMP = "create_postage_stamp_after_dot"
 FROM_LABEL_WRAP_LENGTH = 20
 READ_DOT_SEARCH_DEPTH = 6
 READ_DOT_COLLISION_PADDING = 20
@@ -1030,7 +1031,9 @@ class DotNameDialog(QtWidgets.QDialog):
         self.create_postage_stamp_checkbox = QtWidgets.QCheckBox(
             "Create PostageStamp"
         )
-        self.create_postage_stamp_checkbox.setChecked(True)
+        self.create_postage_stamp_checkbox.setChecked(
+            _setting_bool(SETTING_CREATE_POSTAGE_STAMP, True)
+        )
         self.create_postage_stamp_checkbox.setToolTip(
             "Create a PostageStamp connected to the new Dot."
         )
@@ -1121,7 +1124,7 @@ class DotNameDialog(QtWidgets.QDialog):
         return "" if prefix.lower() == "none" else prefix
 
     def _accept(self):
-        """Remember the colour preference after confirming creation."""
+        """Remember the connector preferences after confirming creation."""
         settings = _settings()
         settings.setValue(
             SETTING_USE_COLOUR,
@@ -1130,6 +1133,10 @@ class DotNameDialog(QtWidgets.QDialog):
         settings.setValue(
             SETTING_REPLACE_UNDERSCORES,
             self.replace_underscores_checkbox.isChecked()
+        )
+        settings.setValue(
+            SETTING_CREATE_POSTAGE_STAMP,
+            self.create_postage_stamp_checkbox.isChecked()
         )
         settings.sync()
         self.accept()
