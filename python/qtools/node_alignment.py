@@ -412,7 +412,7 @@ def _chain_icon(orientation, aligned, palette, size=58):
 
 
 def _between_icon(orientation, active, palette, size=58):
-    """Draw parallel chain lanes with an optional highlighted spacing axis."""
+    """Draw two connected chains and an arrow along their spacing axis."""
     ratio = QtWidgets.QApplication.instance().devicePixelRatio()
     pixmap = QtGui.QPixmap(int(size * ratio), int(size * ratio))
     pixmap.setDevicePixelRatio(ratio)
@@ -422,28 +422,44 @@ def _between_icon(orientation, active, palette, size=58):
     foreground = palette.color(QtGui.QPalette.ButtonText)
     highlight = palette.color(QtGui.QPalette.Highlight)
     highlight.setAlpha(230)
+    connector = palette.color(QtGui.QPalette.Mid)
+    connector.setAlpha(220)
+    arrow = highlight if active else palette.color(QtGui.QPalette.ButtonText)
+    if not active:
+        arrow.setAlpha(120)
 
-    if active:
-        pen = QtGui.QPen(highlight, 2.5)
-        pen.setCapStyle(QtCore.Qt.RoundCap)
-        painter.setPen(pen)
-        if orientation == "vertical":
-            painter.drawLine(QtCore.QLineF(5, 29, 53, 29))
-        else:
-            painter.drawLine(QtCore.QLineF(29, 5, 29, 53))
+    painter.setPen(QtGui.QPen(connector, 2.0))
+    if orientation == "vertical":
+        for x in (13, 45):
+            painter.drawLine(QtCore.QLineF(x, 7, x, 51))
+    else:
+        for y in (13, 45):
+            painter.drawLine(QtCore.QLineF(7, y, 51, y))
+
+    painter.setPen(QtGui.QPen(arrow, 2.0))
+    if orientation == "vertical":
+        painter.drawLine(QtCore.QLineF(21, 29, 37, 29))
+        painter.drawLine(QtCore.QLineF(21, 29, 25, 25))
+        painter.drawLine(QtCore.QLineF(21, 29, 25, 33))
+        painter.drawLine(QtCore.QLineF(37, 29, 33, 25))
+        painter.drawLine(QtCore.QLineF(37, 29, 33, 33))
+    else:
+        painter.drawLine(QtCore.QLineF(29, 21, 29, 37))
+        painter.drawLine(QtCore.QLineF(29, 21, 25, 25))
+        painter.drawLine(QtCore.QLineF(29, 21, 33, 25))
+        painter.drawLine(QtCore.QLineF(29, 37, 25, 33))
+        painter.drawLine(QtCore.QLineF(29, 37, 33, 33))
 
     painter.setPen(QtCore.Qt.NoPen)
     painter.setBrush(foreground)
     if orientation == "vertical":
-        lane_positions = (5, 24, 43) if active else (4, 19, 44)
-        for x in lane_positions:
-            painter.drawRoundedRect(QtCore.QRectF(x, 8, 10, 14), 2, 2)
-            painter.drawRoundedRect(QtCore.QRectF(x, 36, 10, 14), 2, 2)
+        for x in (8, 40):
+            for y in (5, 25, 45):
+                painter.drawRoundedRect(QtCore.QRectF(x, y, 10, 8), 2, 2)
     else:
-        lane_positions = (5, 24, 43) if active else (4, 19, 44)
-        for y in lane_positions:
-            painter.drawRoundedRect(QtCore.QRectF(8, y, 14, 10), 2, 2)
-            painter.drawRoundedRect(QtCore.QRectF(36, y, 14, 10), 2, 2)
+        for y in (8, 40):
+            for x in (5, 25, 45):
+                painter.drawRoundedRect(QtCore.QRectF(x, y, 8, 10), 2, 2)
     painter.end()
     return QtGui.QIcon(pixmap)
 
@@ -589,8 +605,10 @@ class StraightenChainDialog(QtWidgets.QDialog):
         button.setFixedSize(62, 56)
         button.setIcon(_between_icon(orientation, False, self.palette()))
         button.setProperty("orientation", orientation)
+        direction = "left/right" if orientation == "vertical" else "up/down"
         button.setToolTip(
-            "{} rigidly; preserve their internal layout.".format(label)
+            "{} {} as rigid units; preserve their internal layout."
+            .format(label, direction)
         )
         return button
 
