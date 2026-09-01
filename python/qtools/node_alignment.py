@@ -586,8 +586,16 @@ class StraightenChainDialog(QtWidgets.QDialog):
             (self.vertical_gap_slider, self.vertical_gap_spin),
             (self.horizontal_gap_slider, self.horizontal_gap_spin),
         ):
-            slider.valueChanged.connect(spin.setValue)
-            spin.valueChanged.connect(slider.setValue)
+            slider.valueChanged.connect(
+                lambda value, field=spin: self._gap_slider_changed(
+                    value, field
+                )
+            )
+            spin.valueChanged.connect(
+                lambda value, control=slider: self._gap_field_changed(
+                    value, control
+                )
+            )
             spin.valueChanged.connect(self._recompute_preview)
         self.force_gap_checkbox.toggled.connect(self._recompute_preview)
         for button in list(self.vertical_anchor_buttons.values()) + list(
@@ -602,8 +610,8 @@ class StraightenChainDialog(QtWidgets.QDialog):
     def _make_gap_control(label):
         row = QtWidgets.QHBoxLayout()
         slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        slider.setRange(0, 5000)
-        slider.setPageStep(100)
+        slider.setRange(0, 1000)
+        slider.setPageStep(50)
         slider.setValue(50)
         spin = QtWidgets.QSpinBox()
         spin.setRange(0, 5000)
@@ -614,6 +622,26 @@ class StraightenChainDialog(QtWidgets.QDialog):
         row.addWidget(slider, 1)
         row.addWidget(spin)
         return row, slider, spin
+
+    @staticmethod
+    def _gap_from_slider(slider_value):
+        if slider_value <= 500:
+            return int(slider_value)
+        return int(500 + (slider_value - 500) * 9)
+
+    @staticmethod
+    def _slider_from_gap(gap_value):
+        if gap_value <= 500:
+            return int(gap_value)
+        return int(round(500 + (gap_value - 500) / 9.0))
+
+    def _gap_slider_changed(self, slider_value, field):
+        field.setValue(self._gap_from_slider(slider_value))
+
+    def _gap_field_changed(self, gap_value, slider):
+        blocker = QtCore.QSignalBlocker(slider)
+        slider.setValue(self._slider_from_gap(gap_value))
+        del blocker
 
     def _restore_settings(self):
         settings = _settings()
