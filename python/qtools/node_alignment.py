@@ -66,10 +66,12 @@ def _input_nodes(node):
     return result
 
 
-def directional_chains(snapshot, orientation):
-    """Group selected nodes using only connections matching an orientation."""
+def _directional_graph(snapshot, orientation):
+    """Build adjacency and directed degrees for matching selected connections."""
     keys = set(snapshot)
     neighbours = {key: set() for key in keys}
+    incoming = {key: 0 for key in keys}
+    outgoing = {key: 0 for key in keys}
     for key, item in snapshot.items():
         for input_node in _input_nodes(item["node"]):
             input_key = _node_key(input_node)
@@ -91,21 +93,122 @@ def directional_chains(snapshot, orientation):
                 continue
             neighbours[key].add(input_key)
             neighbours[input_key].add(key)
+            incoming[key] += 1
+            outgoing[input_key] += 1
+    return neighbours, incoming, outgoing
 
-    chains = []
-    unseen = {key for key in keys if neighbours[key]}
+
+def _graph_components(neighbours, allowed):
+    """Return connected components restricted to an allowed key set."""
+    components = []
+    unseen = set(allowed)
     while unseen:
         start = unseen.pop()
-        chain = {start}
+        component = {start}
         stack = [start]
         while stack:
             current = stack.pop()
             additions = neighbours[current] & unseen
             unseen.difference_update(additions)
-            chain.update(additions)
+            component.update(additions)
             stack.extend(additions)
-        chains.append(chain)
-    return chains
+        components.append(component)
+    return components
+
+
+def directional_chains(snapshot, orientation):
+    """Group selected nodes using only connections matching an orientation."""
+    neighbours, _incoming, _outgoing = _directional_graph(
+        snapshot, orientation
+    )
+    connected = {key for key in snapshot if neighbours[key]}
+    return _graph_components(neighbours, connected)
+
+
+def movable_chain_sections(snapshot, orientation):
+    """Return rigid chain sections, excluding shared branch/merge junctions."""
+    neighbours, incoming, outgoing = _directional_graph(
+        snapshot, orientation
+    )
+    connected = {key for key in snapshot if neighbours[key]}
+    junctions = {
+        key for key in connected
+        if incoming[key] > 1 or outgoing[key] > 1
+    }
+    sections = _graph_components(neighbours, connected - junctions)
+    return [section for section in sections if section]
+
+
+def _snapshot_at_positions(snapshot, positions):
+    result = {}
+    for key, item in snapshot.items():
+        result[key] = dict(item)
+        result[key]["x"], result[key]["y"] = positions[key]
+    return result
+
+
+def _section_bounds(snapshot, section):
+    left = min(snapshot[key]["x"] for key in section)
+    top = min(snapshot[key]["y"] for key in section)
+    right = max(
+        snapshot[key]["x"] + snapshot[key]["width"] for key in section
+    )
+    bottom = max(
+        snapshot[key]["y"] + snapshot[key]["height"] for key in section
+    )
+    return left, top, right, bottom
+
+
+def spaced_chain_positions(snapshot, orientation, minimum_gap, anchor):
+    """Space rigid parallel chain sections while preserving larger gaps."""
+    result = original_positions(snapshot)
+    sections = movable_chain_sections(snapshot, orientation)
+    if len(sections) < 2:
+        return result
+
+    axis = 0 if orientation == "vertical" else 1
+    records = []
+    for section in sections:
+        bounds = _section_bounds(snapshot, section)
+        start = bounds[axis]
+        end = bounds[axis + 2]
+        records.append({
+            "keys": section,
+            "start": float(start),
+            "end": float(end),
+            "size": float(end - start),
+        })
+    records.sort(key=lambda record: (record["start"], record["end"]))
+
+    relative_starts = [0.0]
+    for previous, current in zip(records, records[1:]):
+        original_gap = current["start"] - previous["end"]
+        preserved_gap = max(float(minimum_gap), original_gap)
+        relative_starts.append(
+            relative_starts[-1] + previous["size"] + preserved_gap
+        )
+    new_span = relative_starts[-1] + records[-1]["size"]
+    original_start = records[0]["start"]
+    original_end = records[-1]["end"]
+    if anchor in {"left", "top"}:
+        target_start = original_start
+    elif anchor in {"right", "bottom"}:
+        target_start = original_end - new_span
+    elif anchor in {"center", "middle"}:
+        target_start = (original_start + original_end - new_span) / 2.0
+    else:
+        raise ValueError("Unknown spacing anchor: {}".format(anchor))
+
+    for record, relative_start in zip(records, relative_starts):
+        shift = target_start + relative_start - record["start"]
+        for key in record["keys"]:
+            x, y = result[key]
+            if axis == 0:
+                x += shift
+            else:
+                y += shift
+            result[key] = (int(round(x)), int(round(y)))
+    return result
 
 
 def straightened_positions(snapshot, orientation):
@@ -246,12 +349,12 @@ def _chain_icon(orientation, aligned, palette, size=58):
             )
     else:
         offsets = (0, 0, 0) if aligned else (-8, 7, -4)
-        horizontal_node_width = 14
+        horizontal_node_width = 17.5
         for index, offset in enumerate(offsets):
             y = size / 2.0 - node_height / 2.0 + offset
             painter.drawRoundedRect(
                 QtCore.QRectF(
-                    4 + index * 18,
+                    1 + index * 19.25,
                     y,
                     horizontal_node_width,
                     node_height,
@@ -263,8 +366,45 @@ def _chain_icon(orientation, aligned, palette, size=58):
     return QtGui.QIcon(pixmap)
 
 
+def _between_icon(orientation, active, palette, size=58):
+    """Draw parallel chain lanes with an optional highlighted spacing axis."""
+    ratio = QtWidgets.QApplication.instance().devicePixelRatio()
+    pixmap = QtGui.QPixmap(int(size * ratio), int(size * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    foreground = palette.color(QtGui.QPalette.ButtonText)
+    highlight = palette.color(QtGui.QPalette.Highlight)
+    highlight.setAlpha(230)
+
+    if active:
+        pen = QtGui.QPen(highlight, 2.5)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        painter.setPen(pen)
+        if orientation == "vertical":
+            painter.drawLine(QtCore.QLineF(5, 29, 53, 29))
+        else:
+            painter.drawLine(QtCore.QLineF(29, 5, 29, 53))
+
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(foreground)
+    if orientation == "vertical":
+        lane_positions = (5, 24, 43) if active else (4, 19, 44)
+        for x in lane_positions:
+            painter.drawRoundedRect(QtCore.QRectF(x, 8, 10, 14), 2, 2)
+            painter.drawRoundedRect(QtCore.QRectF(x, 36, 10, 14), 2, 2)
+    else:
+        lane_positions = (5, 24, 43) if active else (4, 19, 44)
+        for y in lane_positions:
+            painter.drawRoundedRect(QtCore.QRectF(8, y, 14, 10), 2, 2)
+            painter.drawRoundedRect(QtCore.QRectF(36, y, 14, 10), 2, 2)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
 class StraightenChainDialog(QtWidgets.QDialog):
-    """Small modeless preview panel containing only Straighten Chain."""
+    """Modeless preview panel for chain alignment and rigid spacing."""
 
     def __init__(self, parent=None):
         super(StraightenChainDialog, self).__init__(parent)
@@ -283,7 +423,8 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.selection_label = QtWidgets.QLabel()
         layout.addWidget(self.selection_label)
 
-        button_layout = QtWidgets.QHBoxLayout()
+        chain_group = QtWidgets.QGroupBox("Chain Alignment")
+        button_layout = QtWidgets.QHBoxLayout(chain_group)
         self.vertical_button = self._make_chain_button(
             "Vertical chain", "vertical"
         )
@@ -292,7 +433,50 @@ class StraightenChainDialog(QtWidgets.QDialog):
         )
         button_layout.addWidget(self.vertical_button)
         button_layout.addWidget(self.horizontal_button)
-        layout.addLayout(button_layout)
+        layout.addWidget(chain_group)
+
+        spacing_group = QtWidgets.QGroupBox("Between Chains")
+        spacing_layout = QtWidgets.QGridLayout(spacing_group)
+        self.space_vertical_button = self._make_spacing_button(
+            "Space vertical chains", "vertical"
+        )
+        self.space_horizontal_button = self._make_spacing_button(
+            "Space horizontal chains", "horizontal"
+        )
+        (
+            self.vertical_anchor_widget,
+            self.vertical_anchor_group,
+            self.vertical_anchor_buttons,
+        ) = self._make_anchor_selector(
+            (("Left", "left"), ("Center", "center"), ("Right", "right")),
+            "center",
+        )
+        (
+            self.horizontal_anchor_widget,
+            self.horizontal_anchor_group,
+            self.horizontal_anchor_buttons,
+        ) = self._make_anchor_selector(
+            (("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")),
+            "middle",
+        )
+        spacing_layout.addWidget(self.space_vertical_button, 0, 0)
+        spacing_layout.addWidget(self.vertical_anchor_widget, 0, 1)
+        spacing_layout.addWidget(self.space_horizontal_button, 1, 0)
+        spacing_layout.addWidget(self.horizontal_anchor_widget, 1, 1)
+
+        gap_row = QtWidgets.QHBoxLayout()
+        self.minimum_gap_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.minimum_gap_slider.setRange(0, 500)
+        self.minimum_gap_slider.setValue(50)
+        self.minimum_gap_spin = QtWidgets.QSpinBox()
+        self.minimum_gap_spin.setRange(0, 500)
+        self.minimum_gap_spin.setValue(50)
+        self.minimum_gap_spin.setSuffix(" px")
+        gap_row.addWidget(QtWidgets.QLabel("Minimum gap:"))
+        gap_row.addWidget(self.minimum_gap_slider, 1)
+        gap_row.addWidget(self.minimum_gap_spin)
+        spacing_layout.addLayout(gap_row, 2, 0, 1, 2)
+        layout.addWidget(spacing_group)
 
         self.status_label = QtWidgets.QLabel()
         self.status_label.setWordWrap(True)
@@ -315,6 +499,23 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_button.toggled.connect(
             lambda checked: self._toggle("horizontal", checked)
         )
+        self.space_vertical_button.toggled.connect(
+            lambda checked: self._toggle_spacing("vertical", checked)
+        )
+        self.space_horizontal_button.toggled.connect(
+            lambda checked: self._toggle_spacing("horizontal", checked)
+        )
+        self.minimum_gap_slider.valueChanged.connect(
+            self.minimum_gap_spin.setValue
+        )
+        self.minimum_gap_spin.valueChanged.connect(
+            self.minimum_gap_slider.setValue
+        )
+        self.minimum_gap_spin.valueChanged.connect(self._recompute_preview)
+        for button in list(self.vertical_anchor_buttons.values()) + list(
+            self.horizontal_anchor_buttons.values()
+        ):
+            button.toggled.connect(self._anchor_changed)
         self.reset_button.clicked.connect(self.reset_changes)
         self.cancel_button.clicked.connect(self.cancel_changes)
         self.apply_button.clicked.connect(self.apply_changes)
@@ -335,10 +536,48 @@ class StraightenChainDialog(QtWidgets.QDialog):
         )
         return button
 
+    def _make_spacing_button(self, label, orientation):
+        button = QtWidgets.QToolButton()
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        button.setCheckable(True)
+        button.setIconSize(QtCore.QSize(46, 46))
+        button.setFixedSize(62, 56)
+        button.setIcon(_between_icon(orientation, False, self.palette()))
+        button.setProperty("orientation", orientation)
+        button.setToolTip(
+            "{} rigidly; preserve their internal layout.".format(label)
+        )
+        return button
+
+    def _make_anchor_selector(self, choices, default):
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        group = QtWidgets.QButtonGroup(widget)
+        group.setExclusive(True)
+        buttons = {}
+        for label, value in choices:
+            button = QtWidgets.QPushButton(label)
+            button.setCheckable(True)
+            button.setProperty("anchor", value)
+            button.setChecked(value == default)
+            group.addButton(button)
+            layout.addWidget(button)
+            buttons[value] = button
+        return widget, group, buttons
+
     def _set_button_icon(self, button, aligned):
         button.setIcon(
             _chain_icon(
                 button.property("orientation"), aligned, self.palette()
+            )
+        )
+
+    def _set_spacing_icon(self, button, active):
+        button.setIcon(
+            _between_icon(
+                button.property("orientation"), active, self.palette()
             )
         )
 
@@ -349,6 +588,29 @@ class StraightenChainDialog(QtWidgets.QDialog):
             else self.horizontal_button
         )
         self._set_button_icon(button, checked)
+        self._recompute_preview()
+
+    def _toggle_spacing(self, orientation, checked):
+        button = (
+            self.space_vertical_button
+            if orientation == "vertical"
+            else self.space_horizontal_button
+        )
+        self._set_spacing_icon(button, checked)
+        self._recompute_preview()
+
+    def _anchor_changed(self, checked):
+        if checked:
+            self._recompute_preview()
+
+    @staticmethod
+    def _checked_anchor(buttons):
+        for value, button in buttons.items():
+            if button.isChecked():
+                return value
+        raise RuntimeError("Spacing anchor group has no checked button")
+
+    def _recompute_preview(self, *_args):
         orientations = {
             name
             for name, toggle in (
@@ -357,10 +619,34 @@ class StraightenChainDialog(QtWidgets.QDialog):
             )
             if toggle.isChecked()
         }
-        self._preview = smart_straightened_positions(
+        positions = smart_straightened_positions(
             self._snapshot, orientations
         )
-        set_positions(self._snapshot, self._preview)
+        aligned_snapshot = _snapshot_at_positions(self._snapshot, positions)
+        if self.space_vertical_button.isChecked():
+            vertical_positions = spaced_chain_positions(
+                aligned_snapshot,
+                "vertical",
+                self.minimum_gap_spin.value(),
+                self._checked_anchor(self.vertical_anchor_buttons),
+            )
+            positions = {
+                key: (vertical_positions[key][0], positions[key][1])
+                for key in positions
+            }
+        if self.space_horizontal_button.isChecked():
+            horizontal_positions = spaced_chain_positions(
+                aligned_snapshot,
+                "horizontal",
+                self.minimum_gap_spin.value(),
+                self._checked_anchor(self.horizontal_anchor_buttons),
+            )
+            positions = {
+                key: (positions[key][0], horizontal_positions[key][1])
+                for key in positions
+            }
+        self._preview = positions
+        set_positions(self._snapshot, positions)
         self._dirty = self._preview != original_positions(self._snapshot)
         moved = sum(
             self._preview[key] != original_positions(self._snapshot)[key]
@@ -369,7 +655,12 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.status_label.setText(
             "{} node{} moved in preview."
             .format(moved, "" if moved == 1 else "s")
-            if orientations else "Preview off."
+            if (
+                orientations
+                or self.space_vertical_button.isChecked()
+                or self.space_horizontal_button.isChecked()
+            )
+            else "Preview off."
         )
         self._update_state()
 
@@ -381,10 +672,20 @@ class StraightenChainDialog(QtWidgets.QDialog):
         enabled = count >= 2
         self.vertical_button.setEnabled(enabled)
         self.horizontal_button.setEnabled(enabled)
+        self.space_vertical_button.setEnabled(enabled)
+        self.space_horizontal_button.setEnabled(enabled)
+        self.vertical_anchor_widget.setEnabled(
+            enabled and self.space_vertical_button.isChecked()
+        )
+        self.horizontal_anchor_widget.setEnabled(
+            enabled and self.space_horizontal_button.isChecked()
+        )
         self.apply_button.setEnabled(self._dirty)
         self.reset_button.setEnabled(
             self.vertical_button.isChecked()
             or self.horizontal_button.isChecked()
+            or self.space_vertical_button.isChecked()
+            or self.space_horizontal_button.isChecked()
         )
         if not enabled:
             self.status_label.setText(
@@ -397,7 +698,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         final_positions = dict(self._preview)
         set_positions(self._snapshot, original_positions(self._snapshot))
         try:
-            nuke.Undo.begin("Straighten Chain")
+            nuke.Undo.begin("Chain Layout")
             set_positions(self._snapshot, final_positions, preview=False)
         finally:
             nuke.Undo.end()
@@ -408,7 +709,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self._dirty = False
         self.vertical_button.setChecked(False)
         self.horizontal_button.setChecked(False)
-        self.status_label.setText("Straightened chain applied.")
+        self.space_vertical_button.setChecked(False)
+        self.space_horizontal_button.setChecked(False)
+        self.status_label.setText("Chain layout applied.")
         self._update_state()
         self._closing = True
         self.accept()
@@ -416,6 +719,8 @@ class StraightenChainDialog(QtWidgets.QDialog):
     def reset_changes(self):
         self.vertical_button.setChecked(False)
         self.horizontal_button.setChecked(False)
+        self.space_vertical_button.setChecked(False)
+        self.space_horizontal_button.setChecked(False)
         self._preview = original_positions(self._snapshot)
         set_positions(self._snapshot, self._preview)
         self._dirty = False
@@ -434,7 +739,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         answer = QtWidgets.QMessageBox.question(
             self,
             "Close Straighten Chain",
-            "Apply the previewed alignment before closing?",
+            "Apply the previewed node positions before closing?",
             QtWidgets.QMessageBox.Save
             | QtWidgets.QMessageBox.Discard
             | QtWidgets.QMessageBox.Cancel,
