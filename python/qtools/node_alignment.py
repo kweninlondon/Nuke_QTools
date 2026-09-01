@@ -144,25 +144,25 @@ def spacing_units(snapshot, orientation):
     perpendicular = (
         "horizontal" if orientation == "vertical" else "vertical"
     )
+    target_chains = directional_chains(snapshot, orientation)
+    target_keys = set().union(*target_chains) if target_chains else set()
     candidates = [
         {"keys": set(section), "kind": "target"}
-        for section in movable_chain_sections(snapshot, orientation)
+        for section in target_chains
     ]
+    perpendicular_graph, _incoming, _outgoing = _directional_graph(
+        snapshot, perpendicular
+    )
+    perpendicular_keys = {
+        key for key in snapshot
+        if perpendicular_graph[key] and key not in target_keys
+    }
     candidates.extend(
         {"keys": set(section), "kind": "perpendicular"}
-        for section in movable_chain_sections(snapshot, perpendicular)
+        for section in _graph_components(
+            perpendicular_graph, perpendicular_keys
+        )
     )
-
-    # A turn or junction can participate in both directions. Keep such nodes
-    # stationary instead of allowing two rigid units to fight over them.
-    key_counts = {}
-    for candidate in candidates:
-        for key in candidate["keys"]:
-            key_counts[key] = key_counts.get(key, 0) + 1
-    shared = {key for key, count in key_counts.items() if count > 1}
-    for candidate in candidates:
-        candidate["keys"].difference_update(shared)
-    candidates = [candidate for candidate in candidates if candidate["keys"]]
 
     axis = 0 if orientation == "vertical" else 1
     candidates.sort(
@@ -412,7 +412,7 @@ def _chain_icon(orientation, aligned, palette, size=58):
 
 
 def _between_icon(orientation, active, palette, size=58):
-    """Draw two connected chains and an arrow along their spacing axis."""
+    """Draw three connected chains changing from irregular to regular gaps."""
     ratio = QtWidgets.QApplication.instance().devicePixelRatio()
     pixmap = QtGui.QPixmap(int(size * ratio), int(size * ratio))
     pixmap.setDevicePixelRatio(ratio)
@@ -420,46 +420,31 @@ def _between_icon(orientation, active, palette, size=58):
     painter = QtGui.QPainter(pixmap)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
     foreground = palette.color(QtGui.QPalette.ButtonText)
-    highlight = palette.color(QtGui.QPalette.Highlight)
-    highlight.setAlpha(230)
-    connector = palette.color(QtGui.QPalette.Mid)
-    connector.setAlpha(220)
-    arrow = highlight if active else palette.color(QtGui.QPalette.ButtonText)
-    if not active:
-        arrow.setAlpha(120)
-
-    painter.setPen(QtGui.QPen(connector, 2.0))
+    connector = (
+        palette.color(QtGui.QPalette.Highlight)
+        if active else palette.color(QtGui.QPalette.Mid)
+    )
+    connector.setAlpha(230 if active else 210)
+    painter.setPen(QtGui.QPen(connector, 1.5))
     if orientation == "vertical":
-        for x in (13, 45):
-            painter.drawLine(QtCore.QLineF(x, 7, x, 51))
+        chain_positions = (7, 25, 43) if active else (5, 20, 45)
+        for x in chain_positions:
+            painter.drawLine(QtCore.QLineF(x + 4, 5, x + 4, 53))
     else:
-        for y in (13, 45):
-            painter.drawLine(QtCore.QLineF(7, y, 51, y))
-
-    painter.setPen(QtGui.QPen(arrow, 2.0))
-    if orientation == "vertical":
-        painter.drawLine(QtCore.QLineF(21, 29, 37, 29))
-        painter.drawLine(QtCore.QLineF(21, 29, 25, 25))
-        painter.drawLine(QtCore.QLineF(21, 29, 25, 33))
-        painter.drawLine(QtCore.QLineF(37, 29, 33, 25))
-        painter.drawLine(QtCore.QLineF(37, 29, 33, 33))
-    else:
-        painter.drawLine(QtCore.QLineF(29, 21, 29, 37))
-        painter.drawLine(QtCore.QLineF(29, 21, 25, 25))
-        painter.drawLine(QtCore.QLineF(29, 21, 33, 25))
-        painter.drawLine(QtCore.QLineF(29, 37, 25, 33))
-        painter.drawLine(QtCore.QLineF(29, 37, 33, 33))
+        chain_positions = (7, 25, 43) if active else (5, 20, 45)
+        for y in chain_positions:
+            painter.drawLine(QtCore.QLineF(5, y + 4, 53, y + 4))
 
     painter.setPen(QtCore.Qt.NoPen)
     painter.setBrush(foreground)
     if orientation == "vertical":
-        for x in (8, 40):
-            for y in (5, 25, 45):
-                painter.drawRoundedRect(QtCore.QRectF(x, y, 10, 8), 2, 2)
+        for x in chain_positions:
+            for y in (3, 25, 47):
+                painter.drawRoundedRect(QtCore.QRectF(x, y, 8, 7), 1.5, 1.5)
     else:
-        for y in (8, 40):
-            for x in (5, 25, 45):
-                painter.drawRoundedRect(QtCore.QRectF(x, y, 8, 10), 2, 2)
+        for y in chain_positions:
+            for x in (3, 25, 47):
+                painter.drawRoundedRect(QtCore.QRectF(x, y, 7, 8), 1.5, 1.5)
     painter.end()
     return QtGui.QIcon(pixmap)
 
@@ -527,10 +512,12 @@ class StraightenChainDialog(QtWidgets.QDialog):
 
         gap_row = QtWidgets.QHBoxLayout()
         self.minimum_gap_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.minimum_gap_slider.setRange(0, 500)
+        self.minimum_gap_slider.setRange(0, 5000)
+        self.minimum_gap_slider.setPageStep(100)
         self.minimum_gap_slider.setValue(50)
         self.minimum_gap_spin = QtWidgets.QSpinBox()
-        self.minimum_gap_spin.setRange(0, 500)
+        self.minimum_gap_spin.setRange(0, 5000)
+        self.minimum_gap_spin.setSingleStep(10)
         self.minimum_gap_spin.setValue(50)
         self.minimum_gap_spin.setSuffix(" px")
         gap_row.addWidget(QtWidgets.QLabel("Minimum gap:"))
