@@ -50,6 +50,64 @@ def capture_positions(nodes):
     return result
 
 
+def _input_nodes(node):
+    result = []
+    try:
+        count = int(node.inputs())
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            input_node = node.input(index)
+        except Exception:
+            input_node = None
+        if input_node is not None:
+            result.append(input_node)
+    return result
+
+
+def directional_chains(snapshot, orientation):
+    """Group selected nodes using only connections matching an orientation."""
+    keys = set(snapshot)
+    neighbours = {key: set() for key in keys}
+    for key, item in snapshot.items():
+        for input_node in _input_nodes(item["node"]):
+            input_key = _node_key(input_node)
+            if input_key not in keys:
+                continue
+            input_item = snapshot[input_key]
+            source_x = item["x"] + item["width"] / 2.0
+            source_y = item["y"] + item["height"] / 2.0
+            input_x = input_item["x"] + input_item["width"] / 2.0
+            input_y = input_item["y"] + input_item["height"] / 2.0
+            horizontal_distance = abs(source_x - input_x)
+            vertical_distance = abs(source_y - input_y)
+            edge_orientation = (
+                "horizontal"
+                if horizontal_distance > vertical_distance
+                else "vertical"
+            )
+            if edge_orientation != orientation:
+                continue
+            neighbours[key].add(input_key)
+            neighbours[input_key].add(key)
+
+    chains = []
+    unseen = {key for key in keys if neighbours[key]}
+    while unseen:
+        start = unseen.pop()
+        chain = {start}
+        stack = [start]
+        while stack:
+            current = stack.pop()
+            additions = neighbours[current] & unseen
+            unseen.difference_update(additions)
+            chain.update(additions)
+            stack.extend(additions)
+        chains.append(chain)
+    return chains
+
+
 def straightened_positions(snapshot, orientation):
     """Align node centres to the median vertical or horizontal centre line."""
     result = {
@@ -92,6 +150,23 @@ def straightened_positions(snapshot, orientation):
     return result
 
 
+def smart_straightened_positions(snapshot, orientations):
+    """Straighten independent directional chains without collapsing branches."""
+    result = original_positions(snapshot)
+    for orientation in ("vertical", "horizontal"):
+        if orientation not in orientations:
+            continue
+        for chain in directional_chains(snapshot, orientation):
+            chain_snapshot = {key: snapshot[key] for key in chain}
+            aligned = straightened_positions(chain_snapshot, orientation)
+            for key in chain:
+                if orientation == "vertical":
+                    result[key] = (aligned[key][0], result[key][1])
+                else:
+                    result[key] = (result[key][0], aligned[key][1])
+    return result
+
+
 @contextlib.contextmanager
 def _undo_suppressed():
     nuke.Undo.disable()
@@ -113,6 +188,20 @@ def original_positions(snapshot):
         key: (item["x"], item["y"])
         for key, item in snapshot.items()
     }
+
+
+def _nuke_main_window():
+    """Find Nuke's main window so the tool stays above the Node Graph."""
+    application = QtWidgets.QApplication.instance()
+    active = application.activeWindow()
+    while active is not None and active.parentWidget() is not None:
+        active = active.parentWidget()
+    if isinstance(active, QtWidgets.QMainWindow):
+        return active
+    for widget in application.topLevelWidgets():
+        if isinstance(widget, QtWidgets.QMainWindow) and widget.isVisible():
+            return widget
+    return None
 
 
 def _chain_icon(orientation, aligned, palette, size=58):
@@ -142,21 +231,29 @@ def _chain_icon(orientation, aligned, palette, size=58):
 
     painter.setPen(QtCore.Qt.NoPen)
     painter.setBrush(foreground)
+    node_width = 26
+    node_height = 10
     if orientation == "vertical":
         offsets = (0, 0, 0) if aligned else (-8, 7, -4)
-        widths = (25, 34, 29)
-        for index, (offset, width) in enumerate(zip(offsets, widths)):
-            x = size / 2.0 - width / 2.0 + offset
+        for index, offset in enumerate(offsets):
+            x = size / 2.0 - node_width / 2.0 + offset
             painter.drawRoundedRect(
-                QtCore.QRectF(x, 8 + index * 17, width, 10), 2, 2
+                QtCore.QRectF(
+                    x, 8 + index * 17, node_width, node_height
+                ),
+                2,
+                2,
             )
     else:
-        offsets = (0, 0, 0) if aligned else (-7, 7, -3)
-        heights = (19, 25, 21)
-        for index, (offset, height) in enumerate(zip(offsets, heights)):
-            y = size / 2.0 - height / 2.0 + offset
+        offsets = (0, 0, 0) if aligned else (-8, 7, -4)
+        for index, offset in enumerate(offsets):
+            y = size / 2.0 - node_height / 2.0 + offset
             painter.drawRoundedRect(
-                QtCore.QRectF(7 + index * 17, y, 10, height), 2, 2
+                QtCore.QRectF(
+                    1 + index * 15, y, node_width, node_height
+                ),
+                2,
+                2,
             )
     painter.end()
     return QtGui.QIcon(pixmap)
@@ -169,7 +266,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         super(StraightenChainDialog, self).__init__(parent)
         self.setWindowTitle("Straighten Chain")
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
-        self.setMinimumWidth(250)
+        self.setMinimumWidth(230)
         self._snapshot = capture_positions(_selected_nodes())
         self._preview = original_positions(self._snapshot)
         self._dirty = False
@@ -193,19 +290,16 @@ class StraightenChainDialog(QtWidgets.QDialog):
         button_layout.addWidget(self.horizontal_button)
         layout.addLayout(button_layout)
 
-        self.button_group = QtWidgets.QButtonGroup(self)
-        self.button_group.setExclusive(True)
-        self.button_group.addButton(self.vertical_button)
-        self.button_group.addButton(self.horizontal_button)
-
         self.status_label = QtWidgets.QLabel()
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
         footer = QtWidgets.QHBoxLayout()
+        self.reset_button = QtWidgets.QPushButton("Reset")
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.apply_button = QtWidgets.QPushButton("Apply")
         self.apply_button.setDefault(True)
+        footer.addWidget(self.reset_button)
         footer.addStretch()
         footer.addWidget(self.cancel_button)
         footer.addWidget(self.apply_button)
@@ -217,23 +311,23 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_button.toggled.connect(
             lambda checked: self._toggle("horizontal", checked)
         )
+        self.reset_button.clicked.connect(self.reset_changes)
         self.cancel_button.clicked.connect(self.cancel_changes)
         self.apply_button.clicked.connect(self.apply_changes)
 
     def _make_chain_button(self, label, orientation):
         button = QtWidgets.QToolButton()
-        button.setText(label)
-        button.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         button.setCheckable(True)
         button.setIconSize(QtCore.QSize(58, 58))
-        button.setMinimumSize(105, 92)
+        button.setMinimumSize(82, 72)
         button.setIcon(
             _chain_icon(orientation, False, self.palette())
         )
         button.setProperty("orientation", orientation)
         button.setToolTip(
-            "Align selected node centres into a {} line."
-            .format(orientation)
+            "{}: straighten each selected {} tree."
+            .format(label, orientation)
         )
         return button
 
@@ -251,18 +345,28 @@ class StraightenChainDialog(QtWidgets.QDialog):
             else self.horizontal_button
         )
         self._set_button_icon(button, checked)
-        if checked:
-            self._preview = straightened_positions(self._snapshot, orientation)
-            set_positions(self._snapshot, self._preview)
-            self.status_label.setText(
-                "Previewing a {} chain using the median node centre."
-                .format(orientation)
+        orientations = {
+            name
+            for name, toggle in (
+                ("vertical", self.vertical_button),
+                ("horizontal", self.horizontal_button),
             )
-        elif not self.button_group.checkedButton():
-            self._preview = original_positions(self._snapshot)
-            set_positions(self._snapshot, self._preview)
-            self.status_label.setText("Preview removed.")
+            if toggle.isChecked()
+        }
+        self._preview = smart_straightened_positions(
+            self._snapshot, orientations
+        )
+        set_positions(self._snapshot, self._preview)
         self._dirty = self._preview != original_positions(self._snapshot)
+        moved = sum(
+            self._preview[key] != original_positions(self._snapshot)[key]
+            for key in self._preview
+        )
+        self.status_label.setText(
+            "{} node{} moved in preview."
+            .format(moved, "" if moved == 1 else "s")
+            if orientations else "Preview off."
+        )
         self._update_state()
 
     def _update_state(self):
@@ -274,6 +378,10 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.vertical_button.setEnabled(enabled)
         self.horizontal_button.setEnabled(enabled)
         self.apply_button.setEnabled(self._dirty)
+        self.reset_button.setEnabled(
+            self.vertical_button.isChecked()
+            or self.horizontal_button.isChecked()
+        )
         if not enabled:
             self.status_label.setText(
                 "Select at least two nodes before opening this tool."
@@ -294,11 +402,18 @@ class StraightenChainDialog(QtWidgets.QDialog):
         )
         self._preview = original_positions(self._snapshot)
         self._dirty = False
-        self.button_group.setExclusive(False)
         self.vertical_button.setChecked(False)
         self.horizontal_button.setChecked(False)
-        self.button_group.setExclusive(True)
         self.status_label.setText("Straightened chain applied.")
+        self._update_state()
+
+    def reset_changes(self):
+        self.vertical_button.setChecked(False)
+        self.horizontal_button.setChecked(False)
+        self._preview = original_positions(self._snapshot)
+        set_positions(self._snapshot, self._preview)
+        self._dirty = False
+        self.status_label.setText("Reset to the opening positions.")
         self._update_state()
 
     def cancel_changes(self):
@@ -338,7 +453,7 @@ def show_dialog():
                 return _dialog
         except Exception:
             pass
-    _dialog = StraightenChainDialog()
+    _dialog = StraightenChainDialog(parent=_nuke_main_window())
     _dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
     _dialog.destroyed.connect(_clear_dialog_reference)
     _dialog.show()
