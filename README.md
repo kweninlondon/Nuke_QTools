@@ -172,6 +172,16 @@ speed. The output start frame defaults to the Read node's first frame and can
 be changed in the dialog. If a movie does not expose usable FPS metadata, enter
 the source FPS manually in the dialog.
 
+## Q Align Nodes
+
+Select nodes and choose **QTools > Utilities > Align Nodes...** or press
+**Ctrl+Alt+A**. The modeless panel previews alignment directly in the Node
+Graph while leaving the graph available for navigation. It can align edges and
+centres, straighten primary input chains, space nodes, distribute disconnected
+selected trees, and snap selected trees to lines established by unselected
+nodes. **Apply** records one Nuke Undo step; **Cancel** or **Discard** restores
+the original positions.
+
 ## Teleport
 
 Teleport shares selected nodes between artists using a common folder. Its

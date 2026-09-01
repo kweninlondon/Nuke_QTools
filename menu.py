@@ -119,6 +119,12 @@ utilities_menu.addCommand(
     "from qtools import quicktime_retime; quicktime_retime.show_dialog()",
 )
 
+utilities_menu.addCommand(
+    "Align Nodes...",
+    "from qtools import node_alignment; node_alignment.show_dialog()",
+    "Ctrl+Alt+A",
+)
+
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
 
 script_cleanup_menu.addCommand(
