@@ -172,15 +172,12 @@ speed. The output start frame defaults to the Read node's first frame and can
 be changed in the dialog. If a movie does not expose usable FPS metadata, enter
 the source FPS manually in the dialog.
 
-## Q Align Nodes
+## Straighten Chain
 
-Select nodes and choose **QTools > Utilities > Align Nodes...** or press
-**Ctrl+Alt+A**. The modeless panel previews alignment directly in the Node
-Graph while leaving the graph available for navigation. It can align edges and
-centres, straighten primary input chains, space nodes, distribute disconnected
-selected trees, and snap selected trees to lines established by unselected
-nodes. **Apply** records one Nuke Undo step; **Cancel** or **Discard** restores
-the original positions.
+Select at least two nodes and choose **QTools > Utilities > Straighten Chain...**
+or press **Ctrl+Alt+A**. Toggle **Vertical chain** or **Horizontal chain** to
+preview the selected nodes on a shared centre line. Apply records one Nuke Undo
+step; toggling off, cancelling, or discarding restores the original positions.
 
 ## Teleport
 

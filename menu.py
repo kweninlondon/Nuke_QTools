@@ -120,7 +120,7 @@ utilities_menu.addCommand(
 )
 
 utilities_menu.addCommand(
-    "Align Nodes...",
+    "Straighten Chain...",
     "from qtools import node_alignment; node_alignment.show_dialog()",
     "Ctrl+Alt+A",
 )
