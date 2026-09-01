@@ -139,6 +139,51 @@ def movable_chain_sections(snapshot, orientation):
     return [section for section in sections if section]
 
 
+def spacing_units(snapshot, orientation):
+    """Return target chains plus consecutive perpendicular rigid blocks."""
+    perpendicular = (
+        "horizontal" if orientation == "vertical" else "vertical"
+    )
+    candidates = [
+        {"keys": set(section), "kind": "target"}
+        for section in movable_chain_sections(snapshot, orientation)
+    ]
+    candidates.extend(
+        {"keys": set(section), "kind": "perpendicular"}
+        for section in movable_chain_sections(snapshot, perpendicular)
+    )
+
+    # A turn or junction can participate in both directions. Keep such nodes
+    # stationary instead of allowing two rigid units to fight over them.
+    key_counts = {}
+    for candidate in candidates:
+        for key in candidate["keys"]:
+            key_counts[key] = key_counts.get(key, 0) + 1
+    shared = {key for key, count in key_counts.items() if count > 1}
+    for candidate in candidates:
+        candidate["keys"].difference_update(shared)
+    candidates = [candidate for candidate in candidates if candidate["keys"]]
+
+    axis = 0 if orientation == "vertical" else 1
+    candidates.sort(
+        key=lambda candidate: (
+            _section_bounds(snapshot, candidate["keys"])[axis],
+            _section_bounds(snapshot, candidate["keys"])[axis + 2],
+        )
+    )
+    units = []
+    for candidate in candidates:
+        if (
+            candidate["kind"] == "perpendicular"
+            and units
+            and units[-1]["kind"] == "perpendicular"
+        ):
+            units[-1]["keys"].update(candidate["keys"])
+        else:
+            units.append(candidate)
+    return [unit["keys"] for unit in units]
+
+
 def _snapshot_at_positions(snapshot, positions):
     result = {}
     for key, item in snapshot.items():
@@ -162,7 +207,7 @@ def _section_bounds(snapshot, section):
 def spaced_chain_positions(snapshot, orientation, minimum_gap, anchor):
     """Space rigid parallel chain sections while preserving larger gaps."""
     result = original_positions(snapshot)
-    sections = movable_chain_sections(snapshot, orientation)
+    sections = spacing_units(snapshot, orientation)
     if len(sections) < 2:
         return result
 
