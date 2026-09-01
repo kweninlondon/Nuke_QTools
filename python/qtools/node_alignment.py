@@ -246,11 +246,15 @@ def _chain_icon(orientation, aligned, palette, size=58):
             )
     else:
         offsets = (0, 0, 0) if aligned else (-8, 7, -4)
+        horizontal_node_width = 14
         for index, offset in enumerate(offsets):
             y = size / 2.0 - node_height / 2.0 + offset
             painter.drawRoundedRect(
                 QtCore.QRectF(
-                    1 + index * 15, y, node_width, node_height
+                    4 + index * 18,
+                    y,
+                    horizontal_node_width,
+                    node_height,
                 ),
                 2,
                 2,
@@ -406,6 +410,8 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_button.setChecked(False)
         self.status_label.setText("Straightened chain applied.")
         self._update_state()
+        self._closing = True
+        self.accept()
 
     def reset_changes(self):
         self.vertical_button.setChecked(False)
