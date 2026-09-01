@@ -11,7 +11,20 @@ except ImportError:
 
 
 IGNORED_CLASSES = {"BackdropNode", "Viewer"}
+SETTINGS_ORGANISATION = "QTools"
+SETTINGS_APPLICATION = "NodeAlignment"
 _dialog = None
+
+
+def _settings():
+    return QtCore.QSettings(SETTINGS_ORGANISATION, SETTINGS_APPLICATION)
+
+
+def _setting_bool(key, default):
+    value = _settings().value(key, default)
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _node_key(node):
@@ -204,7 +217,13 @@ def _section_bounds(snapshot, section):
     return left, top, right, bottom
 
 
-def spaced_chain_positions(snapshot, orientation, minimum_gap, anchor):
+def spaced_chain_positions(
+    snapshot,
+    orientation,
+    minimum_gap,
+    anchor,
+    force_exact=False,
+):
     """Space rigid parallel chain sections while preserving larger gaps."""
     result = original_positions(snapshot)
     sections = spacing_units(snapshot, orientation)
@@ -228,7 +247,10 @@ def spaced_chain_positions(snapshot, orientation, minimum_gap, anchor):
     relative_starts = [0.0]
     for previous, current in zip(records, records[1:]):
         original_gap = current["start"] - previous["end"]
-        preserved_gap = max(float(minimum_gap), original_gap)
+        preserved_gap = (
+            float(minimum_gap)
+            if force_exact else max(float(minimum_gap), original_gap)
+        )
         relative_starts.append(
             relative_starts[-1] + previous["size"] + preserved_gap
         )
@@ -462,6 +484,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self._dirty = False
         self._closing = False
         self._build_ui()
+        self._restore_settings()
         self._update_state()
 
     def _build_ui(self):
@@ -510,20 +533,26 @@ class StraightenChainDialog(QtWidgets.QDialog):
         spacing_layout.addWidget(self.space_horizontal_button, 1, 0)
         spacing_layout.addWidget(self.horizontal_anchor_widget, 1, 1)
 
-        gap_row = QtWidgets.QHBoxLayout()
-        self.minimum_gap_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.minimum_gap_slider.setRange(0, 5000)
-        self.minimum_gap_slider.setPageStep(100)
-        self.minimum_gap_slider.setValue(50)
-        self.minimum_gap_spin = QtWidgets.QSpinBox()
-        self.minimum_gap_spin.setRange(0, 5000)
-        self.minimum_gap_spin.setSingleStep(10)
-        self.minimum_gap_spin.setValue(50)
-        self.minimum_gap_spin.setSuffix(" px")
-        gap_row.addWidget(QtWidgets.QLabel("Minimum gap:"))
-        gap_row.addWidget(self.minimum_gap_slider, 1)
-        gap_row.addWidget(self.minimum_gap_spin)
-        spacing_layout.addLayout(gap_row, 2, 0, 1, 2)
+        (
+            vertical_gap_row,
+            self.vertical_gap_slider,
+            self.vertical_gap_spin,
+        ) = self._make_gap_control("X gap:")
+        (
+            horizontal_gap_row,
+            self.horizontal_gap_slider,
+            self.horizontal_gap_spin,
+        ) = self._make_gap_control("Y gap:")
+        spacing_layout.addLayout(vertical_gap_row, 2, 0, 1, 2)
+        spacing_layout.addLayout(horizontal_gap_row, 3, 0, 1, 2)
+        self.force_gap_checkbox = QtWidgets.QCheckBox(
+            "Force exact gaps (allow chains to move closer)"
+        )
+        self.force_gap_checkbox.setToolTip(
+            "Use the chosen gap for every neighbouring unit, including gaps "
+            "that are currently larger."
+        )
+        spacing_layout.addWidget(self.force_gap_checkbox, 4, 0, 1, 2)
         layout.addWidget(spacing_group)
 
         self.status_label = QtWidgets.QLabel()
@@ -553,13 +582,14 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.space_horizontal_button.toggled.connect(
             lambda checked: self._toggle_spacing("horizontal", checked)
         )
-        self.minimum_gap_slider.valueChanged.connect(
-            self.minimum_gap_spin.setValue
-        )
-        self.minimum_gap_spin.valueChanged.connect(
-            self.minimum_gap_slider.setValue
-        )
-        self.minimum_gap_spin.valueChanged.connect(self._recompute_preview)
+        for slider, spin in (
+            (self.vertical_gap_slider, self.vertical_gap_spin),
+            (self.horizontal_gap_slider, self.horizontal_gap_spin),
+        ):
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
+            spin.valueChanged.connect(self._recompute_preview)
+        self.force_gap_checkbox.toggled.connect(self._recompute_preview)
         for button in list(self.vertical_anchor_buttons.values()) + list(
             self.horizontal_anchor_buttons.values()
         ):
@@ -567,6 +597,86 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.reset_button.clicked.connect(self.reset_changes)
         self.cancel_button.clicked.connect(self.cancel_changes)
         self.apply_button.clicked.connect(self.apply_changes)
+
+    @staticmethod
+    def _make_gap_control(label):
+        row = QtWidgets.QHBoxLayout()
+        slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        slider.setRange(0, 5000)
+        slider.setPageStep(100)
+        slider.setValue(50)
+        spin = QtWidgets.QSpinBox()
+        spin.setRange(0, 5000)
+        spin.setSingleStep(10)
+        spin.setValue(50)
+        spin.setSuffix(" px")
+        row.addWidget(QtWidgets.QLabel(label))
+        row.addWidget(slider, 1)
+        row.addWidget(spin)
+        return row, slider, spin
+
+    def _restore_settings(self):
+        settings = _settings()
+        self.vertical_gap_spin.setValue(
+            int(settings.value("vertical_gap", 50))
+        )
+        self.horizontal_gap_spin.setValue(
+            int(settings.value("horizontal_gap", 50))
+        )
+        self.force_gap_checkbox.setChecked(
+            _setting_bool("force_exact_gap", False)
+        )
+        vertical_anchor = str(settings.value("vertical_anchor", "center"))
+        horizontal_anchor = str(
+            settings.value("horizontal_anchor", "middle")
+        )
+        self.vertical_anchor_buttons.get(
+            vertical_anchor,
+            self.vertical_anchor_buttons["center"],
+        ).setChecked(True)
+        self.horizontal_anchor_buttons.get(
+            horizontal_anchor,
+            self.horizontal_anchor_buttons["middle"],
+        ).setChecked(True)
+        self.vertical_button.setChecked(
+            _setting_bool("align_vertical", False)
+        )
+        self.horizontal_button.setChecked(
+            _setting_bool("align_horizontal", False)
+        )
+        self.space_vertical_button.setChecked(
+            _setting_bool("space_vertical", False)
+        )
+        self.space_horizontal_button.setChecked(
+            _setting_bool("space_horizontal", False)
+        )
+
+    def _save_settings(self):
+        settings = _settings()
+        settings.setValue("align_vertical", self.vertical_button.isChecked())
+        settings.setValue(
+            "align_horizontal", self.horizontal_button.isChecked()
+        )
+        settings.setValue(
+            "space_vertical", self.space_vertical_button.isChecked()
+        )
+        settings.setValue(
+            "space_horizontal", self.space_horizontal_button.isChecked()
+        )
+        settings.setValue(
+            "vertical_anchor",
+            self._checked_anchor(self.vertical_anchor_buttons),
+        )
+        settings.setValue(
+            "horizontal_anchor",
+            self._checked_anchor(self.horizontal_anchor_buttons),
+        )
+        settings.setValue("vertical_gap", self.vertical_gap_spin.value())
+        settings.setValue("horizontal_gap", self.horizontal_gap_spin.value())
+        settings.setValue(
+            "force_exact_gap", self.force_gap_checkbox.isChecked()
+        )
+        settings.sync()
 
     def _make_chain_button(self, label, orientation):
         button = QtWidgets.QToolButton()
@@ -677,8 +787,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
             vertical_positions = spaced_chain_positions(
                 aligned_snapshot,
                 "vertical",
-                self.minimum_gap_spin.value(),
+                self.vertical_gap_spin.value(),
                 self._checked_anchor(self.vertical_anchor_buttons),
+                self.force_gap_checkbox.isChecked(),
             )
             positions = {
                 key: (vertical_positions[key][0], positions[key][1])
@@ -688,8 +799,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
             horizontal_positions = spaced_chain_positions(
                 aligned_snapshot,
                 "horizontal",
-                self.minimum_gap_spin.value(),
+                self.horizontal_gap_spin.value(),
                 self._checked_anchor(self.horizontal_anchor_buttons),
+                self.force_gap_checkbox.isChecked(),
             )
             positions = {
                 key: (positions[key][0], horizontal_positions[key][1])
@@ -745,6 +857,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
     def apply_changes(self):
         if not self._dirty:
             return
+        self._save_settings()
         final_positions = dict(self._preview)
         set_positions(self._snapshot, original_positions(self._snapshot))
         try:
@@ -778,12 +891,17 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self._update_state()
 
     def cancel_changes(self):
+        self._save_settings()
         set_positions(self._snapshot, original_positions(self._snapshot))
         self._closing = True
         self.reject()
 
     def closeEvent(self, event):
-        if self._closing or not self._dirty:
+        if self._closing:
+            event.accept()
+            return
+        if not self._dirty:
+            self._save_settings()
             event.accept()
             return
         answer = QtWidgets.QMessageBox.question(
@@ -799,6 +917,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
             self.apply_changes()
             event.accept()
         elif answer == QtWidgets.QMessageBox.Discard:
+            self._save_settings()
             set_positions(self._snapshot, original_positions(self._snapshot))
             event.accept()
         else:
