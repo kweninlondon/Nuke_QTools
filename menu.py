@@ -19,11 +19,13 @@ nodes_qtools_menu.addCommand(
 )
 
 from qtools import shot_notes
+from qtools import node_alignment
 from qtools import teleport_settings
 from qtools import wired_copy
 
 
 shot_notes.register_panel()
+node_alignment.register_panel()
 
 qtools_menu.addCommand(
     "Shot Notes",
@@ -120,8 +122,8 @@ utilities_menu.addCommand(
 )
 
 utilities_menu.addCommand(
-    "Straighten Chain...",
-    "from qtools import node_alignment; node_alignment.show_dialog()",
+    "Node Alignment",
+    "from qtools import node_alignment; node_alignment.show_panel()",
     "Ctrl+Alt+A",
 )
 

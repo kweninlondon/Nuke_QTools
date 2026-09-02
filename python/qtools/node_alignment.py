@@ -4,6 +4,7 @@ import contextlib
 import statistics
 
 import nuke
+import nukescripts
 
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
@@ -15,7 +16,13 @@ IGNORED_CLASSES = {"BackdropNode", "Viewer"}
 SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "NodeAlignment"
 MINIMUM_CONNECTION_GAP = 12
-_dialog = None
+PANEL_ID = "com.qtools.NodeAlignment"
+PANEL_TITLE = "Node Alignment"
+WIDGET_EXPRESSION = (
+    "__import__('qtools.node_alignment', "
+    "fromlist=['NodeAlignmentWidget']).NodeAlignmentWidget"
+)
+_PANEL_REGISTERED = False
 
 
 def _settings():
@@ -48,6 +55,17 @@ def _selected_nodes():
         node for node in nuke.selectedNodes()
         if node.Class() not in IGNORED_CLASSES
     ]
+
+
+def _scope_nodes():
+    """Use the selection when present, otherwise the current graph."""
+    selected = _selected_nodes()
+    if selected:
+        return selected, "selection"
+    return (
+        [node for node in nuke.allNodes() if node.Class() not in IGNORED_CLASSES],
+        "current script",
+    )
 
 
 def capture_positions(nodes):
@@ -691,26 +709,39 @@ def _within_icon(orientation, active, palette, size=58):
     return QtGui.QIcon(pixmap)
 
 
-class StraightenChainDialog(QtWidgets.QDialog):
-    """Modeless preview panel for chain alignment and rigid spacing."""
+class NodeAlignmentWidget(QtWidgets.QWidget):
+    """Dockable Properties-pane alignment editor with live preview."""
 
     def __init__(self, parent=None):
-        super(StraightenChainDialog, self).__init__(parent)
-        self.setWindowTitle("Straighten Chain")
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        super(NodeAlignmentWidget, self).__init__(parent)
         self.setMinimumWidth(230)
-        self._snapshot = capture_positions(_selected_nodes())
+        nodes, self._scope_description = _scope_nodes()
+        self._snapshot = capture_positions(nodes)
         self._preview = original_positions(self._snapshot)
         self._dirty = False
-        self._closing = False
+        self._session_active = True
+        self._ever_shown = False
+        self._resolving_hide = False
         self._build_ui()
         self._restore_settings()
+        self.preview_checkbox.setChecked(True)
         self._update_state()
+        self._manual_timer = QtCore.QTimer(self)
+        self._manual_timer.setInterval(250)
+        self._manual_timer.timeout.connect(self._detect_manual_moves)
+        self._manual_timer.start()
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
+        session_row = QtWidgets.QHBoxLayout()
         self.selection_label = QtWidgets.QLabel()
-        layout.addWidget(self.selection_label)
+        self.update_selection_button = QtWidgets.QPushButton("Update Selection")
+        self.preview_checkbox = QtWidgets.QCheckBox("Preview")
+        self.preview_checkbox.setChecked(False)
+        session_row.addWidget(self.selection_label, 1)
+        session_row.addWidget(self.update_selection_button)
+        session_row.addWidget(self.preview_checkbox)
+        layout.addLayout(session_row)
 
         chain_group = QtWidgets.QGroupBox("Chain Alignment")
         button_layout = QtWidgets.QHBoxLayout(chain_group)
@@ -827,12 +858,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
 
         footer = QtWidgets.QHBoxLayout()
         self.reset_button = QtWidgets.QPushButton("Reset")
-        self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.apply_button = QtWidgets.QPushButton("Apply")
-        self.apply_button.setDefault(True)
         footer.addWidget(self.reset_button)
         footer.addStretch()
-        footer.addWidget(self.cancel_button)
         footer.addWidget(self.apply_button)
         layout.addLayout(footer)
 
@@ -888,8 +916,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
         ) + list(self.within_mode_buttons.values()):
             button.toggled.connect(self._anchor_changed)
         self.reset_button.clicked.connect(self.reset_changes)
-        self.cancel_button.clicked.connect(self.cancel_changes)
         self.apply_button.clicked.connect(self.apply_changes)
+        self.preview_checkbox.toggled.connect(self._preview_toggled)
+        self.update_selection_button.clicked.connect(self.update_selection)
 
     @staticmethod
     def _make_gap_control(label, minimum=0, default=50):
@@ -1146,7 +1175,66 @@ class StraightenChainDialog(QtWidgets.QDialog):
                 return value
         raise RuntimeError("Spacing anchor group has no checked button")
 
+    def _write_positions(self, positions, preview=True):
+        set_positions(self._snapshot, positions, preview=preview)
+
+    def _detect_manual_moves(self, force=False, recompute=True):
+        """Rebase preview deviations as user-authored Node Graph moves."""
+        if (
+            not self._session_active
+            or (not force and not self.preview_checkbox.isChecked())
+        ):
+            return
+        changed = False
+        for key, item in list(self._snapshot.items()):
+            try:
+                current = (int(item["node"].xpos()), int(item["node"].ypos()))
+            except Exception:
+                continue
+            expected = self._preview.get(key, (item["x"], item["y"]))
+            if current == expected:
+                continue
+            item["x"] += current[0] - expected[0]
+            item["y"] += current[1] - expected[1]
+            self._preview[key] = current
+            changed = True
+        if changed and recompute:
+            self._recompute_preview()
+
+    def _preview_toggled(self, checked):
+        if checked:
+            self._session_active = True
+            self._recompute_preview()
+        else:
+            self._detect_manual_moves(force=True, recompute=False)
+            self._write_positions(original_positions(self._snapshot))
+            self._preview = original_positions(self._snapshot)
+            self._dirty = False
+            self.status_label.setText("Preview off.")
+            self._update_state()
+
+    def update_selection(self):
+        """Resolve the old preview and explicitly recapture its scope."""
+        if self._dirty and not self._resolve_pending("Update Selection"):
+            return
+        nodes, self._scope_description = _scope_nodes()
+        self._snapshot = capture_positions(nodes)
+        self._preview = original_positions(self._snapshot)
+        self._dirty = False
+        self._session_active = True
+        if not self.preview_checkbox.isChecked():
+            self.preview_checkbox.setChecked(True)
+        else:
+            self._recompute_preview()
+
     def _recompute_preview(self, *_args):
+        if not self.preview_checkbox.isChecked():
+            self._preview = original_positions(self._snapshot)
+            self._dirty = False
+            self.status_label.setText("Preview off.")
+            self._update_state()
+            return
+        self._detect_manual_moves(recompute=False)
         orientations = {
             name
             for name, toggle in (
@@ -1208,7 +1296,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
                 for key in positions
             }
         self._preview = positions
-        set_positions(self._snapshot, positions)
+        self._write_positions(positions)
         self._dirty = self._preview != original_positions(self._snapshot)
         moved = sum(
             self._preview[key] != original_positions(self._snapshot)[key]
@@ -1231,7 +1319,9 @@ class StraightenChainDialog(QtWidgets.QDialog):
     def _update_state(self):
         count = len(self._snapshot)
         self.selection_label.setText(
-            "{} selected node{}".format(count, "" if count == 1 else "s")
+            "{} node{} ({})".format(
+                count, "" if count == 1 else "s", self._scope_description
+            )
         )
         enabled = count >= 2
         self.vertical_button.setEnabled(enabled)
@@ -1295,34 +1385,30 @@ class StraightenChainDialog(QtWidgets.QDialog):
                 "Select at least two nodes before opening this tool."
             )
 
-    def apply_changes(self):
-        if not self._dirty:
-            return
+    def apply_changes(self, _checked=False, switch_tabs=True):
+        self._detect_manual_moves()
         self._save_settings()
         final_positions = dict(self._preview)
-        set_positions(self._snapshot, original_positions(self._snapshot))
-        try:
-            nuke.Undo.begin("Chain Layout")
-            set_positions(self._snapshot, final_positions, preview=False)
-        finally:
-            nuke.Undo.end()
+        if self._dirty:
+            self._write_positions(original_positions(self._snapshot))
+            try:
+                nuke.Undo.begin("Node Alignment")
+                self._write_positions(final_positions, preview=False)
+            finally:
+                nuke.Undo.end()
         self._snapshot = capture_positions(
             [item["node"] for item in self._snapshot.values()]
         )
         self._preview = original_positions(self._snapshot)
         self._dirty = False
-        self.vertical_button.setChecked(False)
-        self.horizontal_button.setChecked(False)
-        self.space_vertical_button.setChecked(False)
-        self.space_horizontal_button.setChecked(False)
-        self.within_vertical_button.setChecked(False)
-        self.within_horizontal_button.setChecked(False)
-        self.status_label.setText("Chain layout applied.")
+        self._session_active = False
+        self.status_label.setText("Alignment applied.")
         self._update_state()
-        self._closing = True
-        self.accept()
+        if switch_tabs:
+            _activate_properties_tab()
 
     def reset_changes(self):
+        self._detect_manual_moves()
         self.vertical_button.setChecked(False)
         self.horizontal_button.setChecked(False)
         self.space_vertical_button.setChecked(False)
@@ -1330,28 +1416,20 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.within_vertical_button.setChecked(False)
         self.within_horizontal_button.setChecked(False)
         self._preview = original_positions(self._snapshot)
-        set_positions(self._snapshot, self._preview)
+        self._write_positions(self._preview)
         self._dirty = False
-        self.status_label.setText("Reset to the opening positions.")
+        self.status_label.setText("Alignment reset; manual moves retained.")
         self._update_state()
 
-    def cancel_changes(self):
-        self._save_settings()
-        set_positions(self._snapshot, original_positions(self._snapshot))
-        self._closing = True
-        self.reject()
-
-    def closeEvent(self, event):
-        if self._closing:
-            event.accept()
-            return
+    def _resolve_pending(self, title="Leave Node Alignment"):
+        self._detect_manual_moves(force=True)
         if not self._dirty:
             self._save_settings()
-            event.accept()
-            return
+            self._session_active = False
+            return True
         answer = QtWidgets.QMessageBox.question(
             self,
-            "Close Straighten Chain",
+            title,
             "Apply the previewed node positions before closing?",
             QtWidgets.QMessageBox.Save
             | QtWidgets.QMessageBox.Discard
@@ -1359,34 +1437,131 @@ class StraightenChainDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.Cancel,
         )
         if answer == QtWidgets.QMessageBox.Save:
-            self.apply_changes()
-            event.accept()
+            self.apply_changes(switch_tabs=False)
+            return True
         elif answer == QtWidgets.QMessageBox.Discard:
             self._save_settings()
-            set_positions(self._snapshot, original_positions(self._snapshot))
-            event.accept()
-        else:
+            self._write_positions(original_positions(self._snapshot))
+            self._preview = original_positions(self._snapshot)
+            self._dirty = False
+            self._session_active = False
+            return True
+        return False
+
+    def showEvent(self, event):
+        super(NodeAlignmentWidget, self).showEvent(event)
+        if self._ever_shown and not self._session_active:
+            nodes, self._scope_description = _scope_nodes()
+            self._snapshot = capture_positions(nodes)
+            self._preview = original_positions(self._snapshot)
+            self._dirty = False
+            self._session_active = True
+            self.preview_checkbox.setChecked(True)
+            self._recompute_preview()
+        self._ever_shown = True
+
+    def hideEvent(self, event):
+        if (
+            self._ever_shown
+            and self._session_active
+            and not self._resolving_hide
+        ):
+            self._resolving_hide = True
+            can_leave = self._resolve_pending()
+            self._resolving_hide = False
+            if not can_leave:
+                QtCore.QTimer.singleShot(0, lambda: _activate_panel_widget(self))
+        super(NodeAlignmentWidget, self).hideEvent(event)
+
+    def closeEvent(self, event):
+        if self._session_active and not self._resolve_pending():
             event.ignore()
+            return
+        event.accept()
 
 
-def show_dialog():
-    """Show a fresh modeless Straighten Chain panel for the selection."""
-    global _dialog
-    if _dialog is not None:
-        try:
-            if not _dialog.close():
-                return _dialog
-        except Exception:
-            pass
-    _dialog = StraightenChainDialog(parent=_nuke_main_window())
-    _dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-    _dialog.destroyed.connect(_clear_dialog_reference)
-    _dialog.show()
-    _dialog.raise_()
-    _dialog.activateWindow()
-    return _dialog
+def register_panel():
+    """Register Node Alignment in Nuke's pane and workspace system."""
+    global _PANEL_REGISTERED
+    if _PANEL_REGISTERED:
+        return
+    nukescripts.panels.registerWidgetAsPanel(
+        WIDGET_EXPRESSION, PANEL_TITLE, PANEL_ID
+    )
+    _PANEL_REGISTERED = True
 
 
-def _clear_dialog_reference(*_args):
-    global _dialog
-    _dialog = None
+def _alignment_widgets():
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        return []
+    return [
+        widget for widget in application.allWidgets()
+        if isinstance(widget, NodeAlignmentWidget)
+    ]
+
+
+def _activate_panel_widget(widget):
+    """Select the stacked page containing an existing alignment widget."""
+    child = widget
+    parent = child.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QtWidgets.QStackedWidget):
+            index = parent.indexOf(child)
+            if index >= 0:
+                parent.setCurrentIndex(index)
+        child = parent
+        parent = child.parentWidget()
+    widget.setFocus()
+
+
+def _activate_properties_tab():
+    """Switch from Node Alignment back to Properties in the same pane."""
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        return False
+    for tab_bar in application.allWidgets():
+        if not isinstance(tab_bar, QtWidgets.QTabBar):
+            continue
+        alignment_index = -1
+        properties_index = -1
+        for index in range(tab_bar.count()):
+            text = str(tab_bar.tabText(index)).replace("&", "").strip()
+            if text == PANEL_TITLE:
+                alignment_index = index
+            elif text == "Properties":
+                properties_index = index
+        if (
+            alignment_index >= 0
+            and properties_index >= 0
+            and tab_bar.currentIndex() == alignment_index
+        ):
+            tab_bar.setCurrentIndex(properties_index)
+            return True
+    return False
+
+
+def show_panel():
+    """Open or activate Node Alignment beside Nuke's Properties panel."""
+    register_panel()
+    widgets = _alignment_widgets()
+    if widgets:
+        _activate_panel_widget(widgets[0])
+        return widgets[0]
+    pane = nuke.getPaneFor("Properties.1") or nuke.getPaneFor("Scene Graph")
+    panel = nukescripts.panels.registerWidgetAsPanel(
+        WIDGET_EXPRESSION, PANEL_TITLE, PANEL_ID, True
+    )
+    panel.addToPane(pane)
+    QtCore.QTimer.singleShot(
+        0,
+        lambda: [
+            _activate_panel_widget(widget)
+            for widget in _alignment_widgets()
+        ],
+    )
+    return panel
+
+
+# Keep old menu/workspace calls working.
+show_dialog = show_panel
