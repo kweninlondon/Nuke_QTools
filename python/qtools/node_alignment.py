@@ -1240,6 +1240,12 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             self.status_label.setText("Live Align off.")
             self._update_state()
 
+    def _set_live_align_silently(self, checked):
+        """Change the session button without applying its view transition."""
+        blocker = QtCore.QSignalBlocker(self.live_align_button)
+        self.live_align_button.setChecked(checked)
+        del blocker
+
     def update_selection(self):
         """Resolve the old preview and explicitly recapture its scope."""
         if self._dirty and not self._resolve_pending("Update Selection"):
@@ -1439,7 +1445,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         applied_snapshot = self._snapshot
         self._dirty = False
         self._session_active = False
-        self.live_align_button.setChecked(False)
+        self._set_live_align_silently(False)
         _clear_node_selection(applied_snapshot)
         self._snapshot = {}
         self._preview = {}
@@ -1456,7 +1462,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         self._dirty = False
         self._save_settings()
         self._session_active = False
-        self.live_align_button.setChecked(False)
+        self._set_live_align_silently(False)
         self._snapshot = {}
         self._preview = {}
         self._scope_description = "no active scope"
