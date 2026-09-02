@@ -284,46 +284,84 @@ def _median(values):
 
 
 def _packed_chain_coordinates(records, minimum_gap, mode):
-    """Return new starts for ordered node records in one directional chain."""
-    if len(records) < 2:
+    """Move interior nodes while preserving the first and last anchors."""
+    if len(records) < 3:
         return [record["start"] for record in records]
     minimum_gap = float(minimum_gap)
     first_start = records[0]["start"]
     last_end = records[-1]["end"]
     total_size = sum(record["size"] for record in records)
-    packed_span = total_size + minimum_gap * (len(records) - 1)
+    available_span = last_end - first_start
+    maximum_gap = (
+        available_span - total_size
+    ) / float(len(records) - 1)
+    if maximum_gap < 0:
+        return [record["start"] for record in records]
+    safe_gap = min(minimum_gap, maximum_gap)
 
     if mode == "start":
-        target_start = first_start
-        gap = minimum_gap
+        starts = [first_start]
+        cursor = records[0]["end"] + safe_gap
+        for record in records[1:-1]:
+            starts.append(cursor)
+            cursor += record["size"] + safe_gap
+        starts.append(records[-1]["start"])
+        return starts
     elif mode == "end":
-        target_start = last_end - packed_span
-        gap = minimum_gap
+        starts = [record["start"] for record in records]
+        cursor = records[-1]["start"] - safe_gap
+        for index in range(len(records) - 2, 0, -1):
+            cursor -= records[index]["size"]
+            starts[index] = cursor
+            cursor -= safe_gap
+        return starts
     elif mode == "even":
-        available_gap = (
-            last_end - first_start - total_size
-        ) / float(len(records) - 1)
-        gap = max(minimum_gap, available_gap)
-        resulting_span = total_size + gap * (len(records) - 1)
-        target_start = (
-            first_start
-            if available_gap >= minimum_gap
-            else (first_start + last_end - resulting_span) / 2.0
-        )
+        safe_gap = maximum_gap
     else:
         raise ValueError("Unknown within-chain mode: {}".format(mode))
 
-    starts = []
-    cursor = target_start
-    for record in records:
+    starts = [first_start]
+    cursor = records[0]["end"] + safe_gap
+    for record in records[1:-1]:
         starts.append(cursor)
-        cursor += record["size"] + gap
+        cursor += record["size"] + safe_gap
+    starts.append(records[-1]["start"])
     return starts
+
+
+def _constrain_to_fixed_endpoints(records, starts, minimum_gap):
+    """Clamp proposed interior positions to collision-free anchored bounds."""
+    if len(records) < 3:
+        return [record["start"] for record in records]
+    total_size = sum(record["size"] for record in records)
+    available_span = records[-1]["end"] - records[0]["start"]
+    maximum_gap = (
+        available_span - total_size
+    ) / float(len(records) - 1)
+    if maximum_gap < 0:
+        return [record["start"] for record in records]
+    safe_gap = min(float(minimum_gap), maximum_gap)
+    constrained = [records[0]["start"]]
+    last_start = records[-1]["start"]
+    for index in range(1, len(records) - 1):
+        lower = (
+            constrained[index - 1]
+            + records[index - 1]["size"]
+            + safe_gap
+        )
+        remaining_sizes = sum(
+            record["size"] for record in records[index + 1:-1]
+        )
+        remaining_gaps = len(records) - 1 - index
+        upper = last_start - remaining_sizes - safe_gap * remaining_gaps
+        constrained.append(min(max(starts[index], lower), upper))
+    constrained.append(last_start)
+    return constrained
 
 
 def _smart_chain_coordinates(records, minimum_gap):
     """Pack local clusters while preserving large intentional separations."""
-    if len(records) < 2:
+    if len(records) < 3:
         return [record["start"] for record in records]
     gaps = [
         current["start"] - previous["end"]
@@ -378,7 +416,8 @@ def _smart_chain_coordinates(records, minimum_gap):
     original_center = (records[0]["start"] + records[-1]["end"]) / 2.0
     new_center = (starts[0] + starts[-1] + records[-1]["size"]) / 2.0
     center_shift = original_center - new_center
-    return [start + center_shift for start in starts]
+    proposed = [start + center_shift for start in starts]
+    return _constrain_to_fixed_endpoints(records, proposed, minimum_gap)
 
 
 def within_chain_positions(snapshot, orientation, mode, minimum_gap):
@@ -608,6 +647,40 @@ def _between_icon(orientation, active, palette, size=58):
     return QtGui.QIcon(pixmap)
 
 
+def _within_icon(orientation, active, palette, size=58):
+    """Draw one chain with fixed endpoints and adjustable interior spacing."""
+    ratio = QtWidgets.QApplication.instance().devicePixelRatio()
+    pixmap = QtGui.QPixmap(int(size * ratio), int(size * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    foreground = palette.color(QtGui.QPalette.ButtonText)
+    connector = (
+        palette.color(QtGui.QPalette.Highlight)
+        if active else palette.color(QtGui.QPalette.Mid)
+    )
+    connector.setAlpha(230 if active else 210)
+    painter.setPen(QtGui.QPen(connector, 2.0))
+    if orientation == "vertical":
+        painter.drawLine(QtCore.QLineF(29, 5, 29, 53))
+        positions = (3, 18, 33, 48) if active else (3, 13, 34, 48)
+    else:
+        painter.drawLine(QtCore.QLineF(5, 29, 53, 29))
+        positions = (3, 18, 33, 48) if active else (3, 13, 34, 48)
+
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(foreground)
+    for position in positions:
+        if orientation == "vertical":
+            rect = QtCore.QRectF(19, position, 20, 7)
+        else:
+            rect = QtCore.QRectF(position, 19, 7, 20)
+        painter.drawRoundedRect(rect, 1.5, 1.5)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
 class StraightenChainDialog(QtWidgets.QDialog):
     """Modeless preview panel for chain alignment and rigid spacing."""
 
@@ -694,14 +767,12 @@ class StraightenChainDialog(QtWidgets.QDialog):
 
         within_group = QtWidgets.QGroupBox("Within Chains")
         within_layout = QtWidgets.QGridLayout(within_group)
-        self.within_vertical_button = QtWidgets.QPushButton("Vertical")
-        self.within_horizontal_button = QtWidgets.QPushButton("Horizontal")
-        self.within_vertical_button.setCheckable(True)
-        self.within_horizontal_button.setCheckable(True)
+        self.within_vertical_button = self._make_within_button("vertical")
+        self.within_horizontal_button = self._make_within_button("horizontal")
         orientation_row = QtWidgets.QHBoxLayout()
         orientation_row.addWidget(self.within_vertical_button)
         orientation_row.addWidget(self.within_horizontal_button)
-        within_layout.addWidget(QtWidgets.QLabel("Apply to:"), 0, 0)
+        within_layout.addWidget(QtWidgets.QLabel("Direction:"), 0, 0)
         within_layout.addLayout(orientation_row, 0, 1)
         (
             self.within_mode_widget,
@@ -719,11 +790,17 @@ class StraightenChainDialog(QtWidgets.QDialog):
         within_layout.addWidget(QtWidgets.QLabel("Mode:"), 1, 0)
         within_layout.addWidget(self.within_mode_widget, 1, 1)
         (
-            node_gap_row,
-            self.node_gap_slider,
-            self.node_gap_spin,
-        ) = self._make_gap_control("Node gap:")
-        within_layout.addLayout(node_gap_row, 2, 0, 1, 2)
+            vertical_node_gap_row,
+            self.vertical_node_gap_slider,
+            self.vertical_node_gap_spin,
+        ) = self._make_gap_control("Vertical gap:")
+        (
+            horizontal_node_gap_row,
+            self.horizontal_node_gap_slider,
+            self.horizontal_node_gap_spin,
+        ) = self._make_gap_control("Horizontal gap:")
+        within_layout.addLayout(vertical_node_gap_row, 2, 0, 1, 2)
+        within_layout.addLayout(horizontal_node_gap_row, 3, 0, 1, 2)
         layout.addWidget(within_group)
 
         self.status_label = QtWidgets.QLabel()
@@ -769,15 +846,25 @@ class StraightenChainDialog(QtWidgets.QDialog):
             )
             spin.valueChanged.connect(self._recompute_preview)
         self.force_gap_checkbox.toggled.connect(self._recompute_preview)
-        self.within_vertical_button.toggled.connect(self._recompute_preview)
-        self.within_horizontal_button.toggled.connect(self._recompute_preview)
-        self.node_gap_slider.valueChanged.connect(
-            lambda value: self._gap_slider_changed(value, self.node_gap_spin)
+        self.within_vertical_button.toggled.connect(
+            lambda checked: self._toggle_within("vertical", checked)
         )
-        self.node_gap_spin.valueChanged.connect(
-            lambda value: self._gap_field_changed(value, self.node_gap_slider)
+        self.within_horizontal_button.toggled.connect(
+            lambda checked: self._toggle_within("horizontal", checked)
         )
-        self.node_gap_spin.valueChanged.connect(self._recompute_preview)
+        for slider, spin in (
+            (self.vertical_node_gap_slider, self.vertical_node_gap_spin),
+            (self.horizontal_node_gap_slider, self.horizontal_node_gap_spin),
+        ):
+            slider.valueChanged.connect(
+                lambda value, field=spin: self._gap_slider_changed(value, field)
+            )
+            spin.valueChanged.connect(
+                lambda value, control=slider: self._gap_field_changed(
+                    value, control
+                )
+            )
+            spin.valueChanged.connect(self._recompute_preview)
         for button in list(self.vertical_anchor_buttons.values()) + list(
             self.horizontal_anchor_buttons.values()
         ) + list(self.within_mode_buttons.values()):
@@ -831,8 +918,12 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_gap_spin.setValue(
             int(settings.value("horizontal_gap", 50))
         )
-        self.node_gap_spin.setValue(
-            int(settings.value("node_gap", 0))
+        legacy_node_gap = int(settings.value("node_gap", 0))
+        self.vertical_node_gap_spin.setValue(
+            int(settings.value("vertical_node_gap", legacy_node_gap))
+        )
+        self.horizontal_node_gap_spin.setValue(
+            int(settings.value("horizontal_node_gap", legacy_node_gap))
         )
         self.force_gap_checkbox.setChecked(
             _setting_bool("force_exact_gap", False)
@@ -895,7 +986,12 @@ class StraightenChainDialog(QtWidgets.QDialog):
         )
         settings.setValue("vertical_gap", self.vertical_gap_spin.value())
         settings.setValue("horizontal_gap", self.horizontal_gap_spin.value())
-        settings.setValue("node_gap", self.node_gap_spin.value())
+        settings.setValue(
+            "vertical_node_gap", self.vertical_node_gap_spin.value()
+        )
+        settings.setValue(
+            "horizontal_node_gap", self.horizontal_node_gap_spin.value()
+        )
         settings.setValue(
             "force_exact_gap", self.force_gap_checkbox.isChecked()
         )
@@ -938,6 +1034,20 @@ class StraightenChainDialog(QtWidgets.QDialog):
         button.setToolTip(
             "{} {} as rigid units; preserve their internal layout."
             .format(label, direction)
+        )
+        return button
+
+    def _make_within_button(self, orientation):
+        button = QtWidgets.QToolButton()
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        button.setCheckable(True)
+        button.setIconSize(QtCore.QSize(46, 46))
+        button.setFixedSize(62, 56)
+        button.setIcon(_within_icon(orientation, False, self.palette()))
+        button.setProperty("orientation", orientation)
+        button.setToolTip(
+            "Adjust spacing inside {} chains; their two end nodes stay fixed."
+            .format(orientation)
         )
         return button
 
@@ -989,6 +1099,15 @@ class StraightenChainDialog(QtWidgets.QDialog):
             else self.space_horizontal_button
         )
         self._set_spacing_icon(button, checked)
+        self._recompute_preview()
+
+    def _toggle_within(self, orientation, checked):
+        button = (
+            self.within_vertical_button
+            if orientation == "vertical"
+            else self.within_horizontal_button
+        )
+        button.setIcon(_within_icon(orientation, checked, self.palette()))
         self._recompute_preview()
 
     def _anchor_changed(self, checked):
@@ -1046,7 +1165,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
                 within_snapshot,
                 "vertical",
                 within_mode,
-                self.node_gap_spin.value(),
+                self.vertical_node_gap_spin.value(),
             )
             positions = {
                 key: (positions[key][0], vertical_within[key][1])
@@ -1057,7 +1176,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
                 within_snapshot,
                 "horizontal",
                 within_mode,
-                self.node_gap_spin.value(),
+                self.horizontal_node_gap_spin.value(),
             )
             positions = {
                 key: (horizontal_within[key][0], positions[key][1])
@@ -1110,8 +1229,16 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.within_vertical_button.setEnabled(enabled)
         self.within_horizontal_button.setEnabled(enabled)
         self.within_mode_widget.setEnabled(within_enabled)
-        self.node_gap_slider.setEnabled(within_enabled)
-        self.node_gap_spin.setEnabled(within_enabled)
+        vertical_within_enabled = (
+            enabled and self.within_vertical_button.isChecked()
+        )
+        horizontal_within_enabled = (
+            enabled and self.within_horizontal_button.isChecked()
+        )
+        self.vertical_node_gap_slider.setEnabled(vertical_within_enabled)
+        self.vertical_node_gap_spin.setEnabled(vertical_within_enabled)
+        self.horizontal_node_gap_slider.setEnabled(horizontal_within_enabled)
+        self.horizontal_node_gap_spin.setEnabled(horizontal_within_enabled)
         self.apply_button.setEnabled(self._dirty)
         self.reset_button.setEnabled(
             self.vertical_button.isChecked()
