@@ -564,6 +564,17 @@ def original_positions(snapshot):
     }
 
 
+def _clear_node_selection(snapshot):
+    for item in snapshot.values():
+        try:
+            item["node"].setSelected(False)
+        except Exception:
+            try:
+                item["node"]["selected"].setValue(False)
+            except Exception:
+                pass
+
+
 def _nuke_main_window():
     """Find Nuke's main window so the tool stays above the Node Graph."""
     application = QtWidgets.QApplication.instance()
@@ -724,7 +735,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         self._resolving_hide = False
         self._build_ui()
         self._restore_settings()
-        self.preview_checkbox.setChecked(True)
+        self.live_align_button.setChecked(True)
         self._update_state()
         self._manual_timer = QtCore.QTimer(self)
         self._manual_timer.setInterval(250)
@@ -736,11 +747,22 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         session_row = QtWidgets.QHBoxLayout()
         self.selection_label = QtWidgets.QLabel()
         self.update_selection_button = QtWidgets.QPushButton("Update Selection")
-        self.preview_checkbox = QtWidgets.QCheckBox("Preview")
-        self.preview_checkbox.setChecked(False)
+        self.live_align_button = QtWidgets.QPushButton("Live Align")
+        self.live_align_button.setCheckable(True)
+        self.live_align_button.setChecked(False)
+        self.live_align_button.setToolTip(
+            "Turn on live alignment for the current scope."
+        )
+        self.live_align_button.setStyleSheet(
+            "QPushButton:checked {"
+            " background-color: #e88722;"
+            " border-color: #ffad45;"
+            " color: #ffffff;"
+            "}"
+        )
         session_row.addWidget(self.selection_label, 1)
         session_row.addWidget(self.update_selection_button)
-        session_row.addWidget(self.preview_checkbox)
+        session_row.addWidget(self.live_align_button)
         layout.addLayout(session_row)
 
         chain_group = QtWidgets.QGroupBox("Chain Alignment")
@@ -917,7 +939,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             button.toggled.connect(self._anchor_changed)
         self.reset_button.clicked.connect(self.reset_changes)
         self.apply_button.clicked.connect(self.apply_changes)
-        self.preview_checkbox.toggled.connect(self._preview_toggled)
+        self.live_align_button.toggled.connect(self._preview_toggled)
         self.update_selection_button.clicked.connect(self.update_selection)
 
     @staticmethod
@@ -1182,7 +1204,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         """Rebase preview deviations as user-authored Node Graph moves."""
         if (
             not self._session_active
-            or (not force and not self.preview_checkbox.isChecked())
+            or (not force and not self.live_align_button.isChecked())
         ):
             return
         changed = False
@@ -1203,6 +1225,11 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
 
     def _preview_toggled(self, checked):
         if checked:
+            if self._scope_description == "no active scope":
+                nodes, self._scope_description = _scope_nodes()
+                self._snapshot = capture_positions(nodes)
+                self._preview = original_positions(self._snapshot)
+                self._dirty = False
             self._session_active = True
             self._recompute_preview()
         else:
@@ -1210,7 +1237,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             self._write_positions(original_positions(self._snapshot))
             self._preview = original_positions(self._snapshot)
             self._dirty = False
-            self.status_label.setText("Preview off.")
+            self.status_label.setText("Live Align off.")
             self._update_state()
 
     def update_selection(self):
@@ -1222,16 +1249,16 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         self._preview = original_positions(self._snapshot)
         self._dirty = False
         self._session_active = True
-        if not self.preview_checkbox.isChecked():
-            self.preview_checkbox.setChecked(True)
+        if not self.live_align_button.isChecked():
+            self.live_align_button.setChecked(True)
         else:
             self._recompute_preview()
 
     def _recompute_preview(self, *_args):
-        if not self.preview_checkbox.isChecked():
+        if not self.live_align_button.isChecked():
             self._preview = original_positions(self._snapshot)
             self._dirty = False
-            self.status_label.setText("Preview off.")
+            self.status_label.setText("Live Align off.")
             self._update_state()
             return
         self._detect_manual_moves(recompute=False)
@@ -1303,7 +1330,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             for key in self._preview
         )
         self.status_label.setText(
-            "{} node{} moved in preview."
+            "{} node{} moved by Live Align."
             .format(moved, "" if moved == 1 else "s")
             if (
                 orientations
@@ -1312,12 +1339,15 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
                 or self.within_vertical_button.isChecked()
                 or self.within_horizontal_button.isChecked()
             )
-            else "Preview off."
+            else "No alignment operation selected."
         )
         self._update_state()
 
     def _update_state(self):
         count = len(self._snapshot)
+        self.update_selection_button.setVisible(
+            self._scope_description != "no active scope"
+        )
         self.selection_label.setText(
             "{} node{} ({})".format(
                 count, "" if count == 1 else "s", self._scope_description
@@ -1381,11 +1411,16 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             or self.within_horizontal_button.isChecked()
         )
         if not enabled:
-            self.status_label.setText(
-                "Select at least two nodes before opening this tool."
-            )
+            if self._scope_description == "no active scope":
+                self.status_label.setText(
+                    "Use Update Selection to start aligning."
+                )
+            else:
+                self.status_label.setText(
+                    "The current scope needs at least two nodes."
+                )
 
-    def apply_changes(self, _checked=False, switch_tabs=True):
+    def apply_changes(self, _checked=False):
         self._detect_manual_moves()
         self._save_settings()
         final_positions = dict(self._preview)
@@ -1396,16 +1431,28 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
                 self._write_positions(final_positions, preview=False)
             finally:
                 nuke.Undo.end()
+        applied_snapshot = self._snapshot
         self._snapshot = capture_positions(
             [item["node"] for item in self._snapshot.values()]
         )
         self._preview = original_positions(self._snapshot)
         self._dirty = False
         self._session_active = False
-        self.status_label.setText("Alignment applied.")
+        self.live_align_button.setChecked(False)
+        self.vertical_button.setChecked(False)
+        self.horizontal_button.setChecked(False)
+        self.space_vertical_button.setChecked(False)
+        self.space_horizontal_button.setChecked(False)
+        self.within_vertical_button.setChecked(False)
+        self.within_horizontal_button.setChecked(False)
+        _clear_node_selection(applied_snapshot)
+        self._snapshot = {}
+        self._preview = {}
+        self._scope_description = "no active scope"
         self._update_state()
-        if switch_tabs:
-            _activate_properties_tab()
+        self.status_label.setText(
+            "Alignment applied. Turn on Live Align to start again."
+        )
 
     def reset_changes(self):
         self._detect_manual_moves()
@@ -1430,14 +1477,14 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
         answer = QtWidgets.QMessageBox.question(
             self,
             title,
-            "Apply the previewed node positions before closing?",
+            "Apply the live alignment changes before continuing?",
             QtWidgets.QMessageBox.Save
             | QtWidgets.QMessageBox.Discard
             | QtWidgets.QMessageBox.Cancel,
             QtWidgets.QMessageBox.Cancel,
         )
         if answer == QtWidgets.QMessageBox.Save:
-            self.apply_changes(switch_tabs=False)
+            self.apply_changes()
             return True
         elif answer == QtWidgets.QMessageBox.Discard:
             self._save_settings()
@@ -1456,7 +1503,7 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             self._preview = original_positions(self._snapshot)
             self._dirty = False
             self._session_active = True
-            self.preview_checkbox.setChecked(True)
+            self.live_align_button.setChecked(True)
             self._recompute_preview()
         self._ever_shown = True
 
