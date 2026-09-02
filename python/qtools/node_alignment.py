@@ -1401,19 +1401,24 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             self.horizontal_node_gap_row,
             horizontal_within_enabled and not even_mode,
         )
-        self.apply_button.setEnabled(self._dirty)
+        self.apply_button.setEnabled(
+            self._session_active and self._dirty
+        )
         self.reset_button.setEnabled(
-            self.vertical_button.isChecked()
-            or self.horizontal_button.isChecked()
-            or self.space_vertical_button.isChecked()
-            or self.space_horizontal_button.isChecked()
-            or self.within_vertical_button.isChecked()
-            or self.within_horizontal_button.isChecked()
+            self._session_active
+            and (
+                self.vertical_button.isChecked()
+                or self.horizontal_button.isChecked()
+                or self.space_vertical_button.isChecked()
+                or self.space_horizontal_button.isChecked()
+                or self.within_vertical_button.isChecked()
+                or self.within_horizontal_button.isChecked()
+            )
         )
         if not enabled:
             if self._scope_description == "no active scope":
                 self.status_label.setText(
-                    "Use Update Selection to start aligning."
+                    "Turn on Live Align to start aligning."
                 )
             else:
                 self.status_label.setText(
@@ -1432,19 +1437,9 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
             finally:
                 nuke.Undo.end()
         applied_snapshot = self._snapshot
-        self._snapshot = capture_positions(
-            [item["node"] for item in self._snapshot.values()]
-        )
-        self._preview = original_positions(self._snapshot)
         self._dirty = False
         self._session_active = False
         self.live_align_button.setChecked(False)
-        self.vertical_button.setChecked(False)
-        self.horizontal_button.setChecked(False)
-        self.space_vertical_button.setChecked(False)
-        self.space_horizontal_button.setChecked(False)
-        self.within_vertical_button.setChecked(False)
-        self.within_horizontal_button.setChecked(False)
         _clear_node_selection(applied_snapshot)
         self._snapshot = {}
         self._preview = {}
@@ -1456,17 +1451,19 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
 
     def reset_changes(self):
         self._detect_manual_moves()
-        self.vertical_button.setChecked(False)
-        self.horizontal_button.setChecked(False)
-        self.space_vertical_button.setChecked(False)
-        self.space_horizontal_button.setChecked(False)
-        self.within_vertical_button.setChecked(False)
-        self.within_horizontal_button.setChecked(False)
         self._preview = original_positions(self._snapshot)
         self._write_positions(self._preview)
         self._dirty = False
-        self.status_label.setText("Alignment reset; manual moves retained.")
+        self._save_settings()
+        self._session_active = False
+        self.live_align_button.setChecked(False)
+        self._snapshot = {}
+        self._preview = {}
+        self._scope_description = "no active scope"
         self._update_state()
+        self.status_label.setText(
+            "Alignment reset; settings and manual moves retained."
+        )
 
     def _resolve_pending(self, title="Leave Node Alignment"):
         self._detect_manual_moves(force=True)
