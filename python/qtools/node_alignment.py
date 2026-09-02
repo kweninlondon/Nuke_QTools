@@ -131,6 +131,20 @@ def _directional_graph(snapshot, orientation):
     return neighbours, incoming, outgoing
 
 
+def _connection_graph(snapshot):
+    """Build adjacency for every selected connection, ignoring geometry."""
+    keys = set(snapshot)
+    neighbours = {key: set() for key in keys}
+    for key, item in snapshot.items():
+        for input_node in _input_nodes(item["node"]):
+            input_key = _node_key(input_node)
+            if input_key not in keys:
+                continue
+            neighbours[key].add(input_key)
+            neighbours[input_key].add(key)
+    return neighbours
+
+
 def _graph_components(neighbours, allowed):
     """Return connected components restricted to an allowed key set."""
     components = []
@@ -159,17 +173,68 @@ def directional_chains(snapshot, orientation):
 
 
 def movable_chain_sections(snapshot, orientation):
-    """Return rigid chain sections, excluding shared branch/merge junctions."""
-    neighbours, incoming, outgoing = _directional_graph(
+    """Return maximal paths, including their branch and merge endpoints."""
+    neighbours, _incoming, _outgoing = _directional_graph(
         snapshot, orientation
     )
     connected = {key for key in snapshot if neighbours[key]}
-    junctions = {
-        key for key in connected
-        if incoming[key] > 1 or outgoing[key] > 1
-    }
-    sections = _graph_components(neighbours, connected - junctions)
-    return [section for section in sections if section]
+    terminals = {key for key in connected if len(neighbours[key]) != 2}
+    visited_edges = set()
+    sections = []
+
+    def edge_key(first, second):
+        return frozenset((first, second))
+
+    for terminal in terminals:
+        for neighbour in neighbours[terminal]:
+            edge = edge_key(terminal, neighbour)
+            if edge in visited_edges:
+                continue
+            visited_edges.add(edge)
+            path = [terminal, neighbour]
+            previous = terminal
+            current = neighbour
+            while current not in terminals:
+                choices = neighbours[current] - {previous}
+                if not choices:
+                    break
+                following = next(iter(choices))
+                edge = edge_key(current, following)
+                if edge in visited_edges:
+                    break
+                visited_edges.add(edge)
+                path.append(following)
+                previous, current = current, following
+            sections.append(path)
+
+    # A closed loop has no terminal; keep it as one deterministic section.
+    for start in connected:
+        remaining = [
+            key for key in neighbours[start]
+            if edge_key(start, key) not in visited_edges
+        ]
+        if not remaining:
+            continue
+        path = [start]
+        previous = None
+        current = start
+        while True:
+            choices = [
+                key for key in neighbours[current]
+                if key != previous
+                and edge_key(current, key) not in visited_edges
+            ]
+            if not choices:
+                break
+            following = choices[0]
+            visited_edges.add(edge_key(current, following))
+            path.append(following)
+            previous, current = current, following
+            if current == start:
+                break
+        if len(path) > 1:
+            sections.append(path)
+    return sections
 
 
 def spacing_units(snapshot, orientation):
@@ -525,19 +590,92 @@ def straightened_positions(snapshot, orientation):
 
 
 def smart_straightened_positions(snapshot, orientations):
-    """Straighten independent directional chains without collapsing branches."""
+    """Straighten maximal paths while preserving shared junction anchors."""
     result = original_positions(snapshot)
     for orientation in ("vertical", "horizontal"):
         if orientation not in orientations:
             continue
-        for chain in directional_chains(snapshot, orientation):
-            chain_snapshot = {key: snapshot[key] for key in chain}
-            aligned = straightened_positions(chain_snapshot, orientation)
+        neighbours, _incoming, _outgoing = _directional_graph(
+            snapshot, orientation
+        )
+        paths = movable_chain_sections(snapshot, orientation)
+        directional_edges = {
+            frozenset((key, neighbour))
+            for key in neighbours
+            for neighbour in neighbours[key]
+        }
+        all_neighbours = _connection_graph(snapshot)
+        for component in _graph_components(all_neighbours, set(snapshot)):
+            component_edges = {
+                frozenset((key, neighbour))
+                for key in component
+                for neighbour in all_neighbours[key] & component
+            }
+            if (
+                len(component) >= 2
+                and component_edges
+                and not component_edges & directional_edges
+                and all(len(all_neighbours[key]) <= 2 for key in component)
+            ):
+                paths.append(list(component))
+        main_axis = "y" if orientation == "vertical" else "x"
+        main_size = "height" if orientation == "vertical" else "width"
+        cross_axis = "x" if orientation == "vertical" else "y"
+        cross_size = "width" if orientation == "vertical" else "height"
+        for chain in paths:
+            records = []
             for key in chain:
+                item = snapshot[key]
+                records.append({
+                    "key": key,
+                    "main": item[main_axis] + item[main_size] / 2.0,
+                    "cross": item[cross_axis] + item[cross_size] / 2.0,
+                    "cross_size": item[cross_size],
+                    "junction": len(neighbours[key]) > 2,
+                    "dot": item["node"].Class() == "Dot",
+                })
+            records.sort(key=lambda record: record["main"])
+            for record in records:
+                record["fixed"] = record["junction"] or record["dot"]
+            fixed = [record for record in records if record["fixed"]]
+            if (
+                len(records) < 2
+                or (
+                    len(records) == 2
+                    and any(record["junction"] for record in records)
+                )
+            ):
+                continue
+
+            def target_cross(record):
+                if not fixed:
+                    return _median([item["cross"] for item in records])
+                if len(fixed) == 1 or record["main"] <= fixed[0]["main"]:
+                    return fixed[0]["cross"]
+                if record["main"] >= fixed[-1]["main"]:
+                    return fixed[-1]["cross"]
+                for first, second in zip(fixed, fixed[1:]):
+                    if first["main"] <= record["main"] <= second["main"]:
+                        span = second["main"] - first["main"]
+                        if not span:
+                            return (first["cross"] + second["cross"]) / 2.0
+                        amount = (record["main"] - first["main"]) / span
+                        return first["cross"] + amount * (
+                            second["cross"] - first["cross"]
+                        )
+                return record["cross"]
+
+            for record in records:
+                if record["fixed"]:
+                    continue
+                cross = target_cross(record)
+                x, y = result[record["key"]]
+                position = int(round(cross - record["cross_size"] / 2.0))
                 if orientation == "vertical":
-                    result[key] = (aligned[key][0], result[key][1])
+                    x = position
                 else:
-                    result[key] = (result[key][0], aligned[key][1])
+                    y = position
+                result[record["key"]] = (x, y)
     return result
 
 
