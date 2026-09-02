@@ -14,6 +14,7 @@ except ImportError:
 IGNORED_CLASSES = {"BackdropNode", "Viewer"}
 SETTINGS_ORGANISATION = "QTools"
 SETTINGS_APPLICATION = "NodeAlignment"
+MINIMUM_CONNECTION_GAP = 12
 _dialog = None
 
 
@@ -421,7 +422,7 @@ def _smart_chain_coordinates(records, minimum_gap):
 
 
 def within_chain_positions(snapshot, orientation, mode, minimum_gap):
-    """Reposition nodes along each chain axis without changing the cross axis."""
+    """Space chain interiors, using endpoints and Dots as fixed anchors."""
     result = original_positions(snapshot)
     axis = 1 if orientation == "vertical" else 0
     size_name = "height" if orientation == "vertical" else "width"
@@ -439,18 +440,27 @@ def within_chain_positions(snapshot, orientation, mode, minimum_gap):
                 "size": size,
             })
         records.sort(key=lambda record: (record["start"], record["end"]))
-        starts = (
-            _smart_chain_coordinates(records, minimum_gap)
-            if mode == "smart"
-            else _packed_chain_coordinates(records, minimum_gap, mode)
+        anchor_indices = [0]
+        anchor_indices.extend(
+            index for index, record in enumerate(records[1:-1], 1)
+            if snapshot[record["key"]]["node"].Class() == "Dot"
         )
-        for record, start in zip(records, starts):
-            x, y = result[record["key"]]
-            if axis == 1:
-                y = int(round(start))
-            else:
-                x = int(round(start))
-            result[record["key"]] = (x, y)
+        anchor_indices.append(len(records) - 1)
+        anchor_indices = sorted(set(anchor_indices))
+        for first, last in zip(anchor_indices, anchor_indices[1:]):
+            segment = records[first:last + 1]
+            starts = (
+                _smart_chain_coordinates(segment, minimum_gap)
+                if mode == "smart"
+                else _packed_chain_coordinates(segment, minimum_gap, mode)
+            )
+            for record, start in zip(segment[1:-1], starts[1:-1]):
+                x, y = result[record["key"]]
+                if axis == 1:
+                    y = int(round(start))
+                else:
+                    x = int(round(start))
+                result[record["key"]] = (x, y)
     return result
 
 
@@ -753,8 +763,10 @@ class StraightenChainDialog(QtWidgets.QDialog):
             self.horizontal_gap_slider,
             self.horizontal_gap_spin,
         ) = self._make_gap_control("Y gap:")
-        spacing_layout.addLayout(vertical_gap_row, 2, 0, 1, 2)
-        spacing_layout.addLayout(horizontal_gap_row, 3, 0, 1, 2)
+        self.vertical_gap_row = vertical_gap_row
+        self.horizontal_gap_row = horizontal_gap_row
+        spacing_layout.addLayout(self.vertical_gap_row, 2, 0, 1, 2)
+        spacing_layout.addLayout(self.horizontal_gap_row, 3, 0, 1, 2)
         self.force_gap_checkbox = QtWidgets.QCheckBox(
             "Force exact gaps (allow chains to move closer)"
         )
@@ -793,14 +805,20 @@ class StraightenChainDialog(QtWidgets.QDialog):
             vertical_node_gap_row,
             self.vertical_node_gap_slider,
             self.vertical_node_gap_spin,
-        ) = self._make_gap_control("Vertical gap:")
+        ) = self._make_gap_control(
+            "Vertical gap:", MINIMUM_CONNECTION_GAP, 30
+        )
         (
             horizontal_node_gap_row,
             self.horizontal_node_gap_slider,
             self.horizontal_node_gap_spin,
-        ) = self._make_gap_control("Horizontal gap:")
-        within_layout.addLayout(vertical_node_gap_row, 2, 0, 1, 2)
-        within_layout.addLayout(horizontal_node_gap_row, 3, 0, 1, 2)
+        ) = self._make_gap_control(
+            "Horizontal gap:", MINIMUM_CONNECTION_GAP, 30
+        )
+        self.vertical_node_gap_row = vertical_node_gap_row
+        self.horizontal_node_gap_row = horizontal_node_gap_row
+        within_layout.addLayout(self.vertical_node_gap_row, 2, 0, 1, 2)
+        within_layout.addLayout(self.horizontal_node_gap_row, 3, 0, 1, 2)
         layout.addWidget(within_group)
 
         self.status_label = QtWidgets.QLabel()
@@ -874,16 +892,16 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.apply_button.clicked.connect(self.apply_changes)
 
     @staticmethod
-    def _make_gap_control(label):
+    def _make_gap_control(label, minimum=0, default=50):
         row = QtWidgets.QHBoxLayout()
         slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        slider.setRange(0, 1000)
+        slider.setRange(minimum, 1000)
         slider.setPageStep(50)
-        slider.setValue(50)
+        slider.setValue(default)
         spin = QtWidgets.QSpinBox()
-        spin.setRange(0, 5000)
+        spin.setRange(minimum, 5000)
         spin.setSingleStep(10)
-        spin.setValue(50)
+        spin.setValue(default)
         spin.setSuffix(" px")
         row.addWidget(QtWidgets.QLabel(label))
         row.addWidget(slider, 1)
@@ -918,7 +936,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_gap_spin.setValue(
             int(settings.value("horizontal_gap", 50))
         )
-        legacy_node_gap = int(settings.value("node_gap", 0))
+        legacy_node_gap = int(settings.value("node_gap", 30))
         self.vertical_node_gap_spin.setValue(
             int(settings.value("vertical_node_gap", legacy_node_gap))
         )
@@ -1115,6 +1133,13 @@ class StraightenChainDialog(QtWidgets.QDialog):
             self._recompute_preview()
 
     @staticmethod
+    def _set_layout_visible(layout, visible):
+        for index in range(layout.count()):
+            widget = layout.itemAt(index).widget()
+            if widget is not None:
+                widget.setVisible(visible)
+
+    @staticmethod
     def _checked_anchor(buttons):
         for value, button in buttons.items():
             if button.isChecked():
@@ -1219,6 +1244,14 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.horizontal_anchor_widget.setEnabled(
             enabled and self.space_horizontal_button.isChecked()
         )
+        self._set_layout_visible(
+            self.vertical_gap_row,
+            self.space_vertical_button.isChecked(),
+        )
+        self._set_layout_visible(
+            self.horizontal_gap_row,
+            self.space_horizontal_button.isChecked(),
+        )
         within_enabled = (
             enabled
             and (
@@ -1229,6 +1262,7 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.within_vertical_button.setEnabled(enabled)
         self.within_horizontal_button.setEnabled(enabled)
         self.within_mode_widget.setEnabled(within_enabled)
+        even_mode = self.within_mode_buttons["even"].isChecked()
         vertical_within_enabled = (
             enabled and self.within_vertical_button.isChecked()
         )
@@ -1239,6 +1273,14 @@ class StraightenChainDialog(QtWidgets.QDialog):
         self.vertical_node_gap_spin.setEnabled(vertical_within_enabled)
         self.horizontal_node_gap_slider.setEnabled(horizontal_within_enabled)
         self.horizontal_node_gap_spin.setEnabled(horizontal_within_enabled)
+        self._set_layout_visible(
+            self.vertical_node_gap_row,
+            vertical_within_enabled and not even_mode,
+        )
+        self._set_layout_visible(
+            self.horizontal_node_gap_row,
+            horizontal_within_enabled and not even_mode,
+        )
         self.apply_button.setEnabled(self._dirty)
         self.reset_button.setEnabled(
             self.vertical_button.isChecked()
