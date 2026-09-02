@@ -516,17 +516,26 @@ def within_chain_positions(snapshot, orientation, mode, minimum_gap):
         for key in chain:
             start = float(snapshot[key]["y" if axis == 1 else "x"])
             size = float(snapshot[key][size_name])
+            cross_start = float(snapshot[key]["x" if axis == 1 else "y"])
+            cross_size = float(
+                snapshot[key]["width" if axis == 1 else "height"]
+            )
             records.append({
                 "key": key,
                 "start": start,
                 "end": start + size,
                 "size": size,
+                "cross": cross_start + cross_size / 2.0,
             })
         records.sort(key=lambda record: (record["start"], record["end"]))
         anchor_indices = [0]
         anchor_indices.extend(
             index for index, record in enumerate(records[1:-1], 1)
-            if snapshot[record["key"]]["node"].Class() == "Dot"
+            if (
+                snapshot[record["key"]]["node"].Class() == "Dot"
+                and abs(records[index - 1]["cross"] - record["cross"]) <= 4.0
+                and abs(records[index + 1]["cross"] - record["cross"]) <= 4.0
+            )
         )
         anchor_indices.append(len(records) - 1)
         anchor_indices = sorted(set(anchor_indices))
@@ -599,11 +608,6 @@ def smart_straightened_positions(snapshot, orientations):
             snapshot, orientation
         )
         paths = movable_chain_sections(snapshot, orientation)
-        directional_edges = {
-            frozenset((key, neighbour))
-            for key in neighbours
-            for neighbour in neighbours[key]
-        }
         all_neighbours = _connection_graph(snapshot)
         for component in _graph_components(all_neighbours, set(snapshot)):
             component_edges = {
@@ -611,12 +615,16 @@ def smart_straightened_positions(snapshot, orientations):
                 for key in component
                 for neighbour in all_neighbours[key] & component
             }
-            if (
+            simple_chain = (
                 len(component) >= 2
                 and component_edges
-                and not component_edges & directional_edges
                 and all(len(all_neighbours[key]) <= 2 for key in component)
-            ):
+            )
+            if simple_chain:
+                paths = [
+                    path for path in paths
+                    if not set(path).issubset(component)
+                ]
                 paths.append(list(component))
         main_axis = "y" if orientation == "vertical" else "x"
         main_size = "height" if orientation == "vertical" else "width"
@@ -635,8 +643,18 @@ def smart_straightened_positions(snapshot, orientations):
                     "dot": item["node"].Class() == "Dot",
                 })
             records.sort(key=lambda record: record["main"])
-            for record in records:
-                record["fixed"] = record["junction"] or record["dot"]
+            for index, record in enumerate(records):
+                aligned_internal_dot = False
+                if record["dot"] and 0 < index < len(records) - 1:
+                    previous = records[index - 1]["cross"]
+                    following = records[index + 1]["cross"]
+                    aligned_internal_dot = (
+                        abs(previous - record["cross"]) <= 4.0
+                        and abs(following - record["cross"]) <= 4.0
+                    )
+                record["fixed"] = (
+                    record["junction"] or aligned_internal_dot
+                )
             fixed = [record for record in records if record["fixed"]]
             if (
                 len(records) < 2
