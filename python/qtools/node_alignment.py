@@ -1351,6 +1351,14 @@ class NodeAlignmentWidget(QtWidgets.QWidget):
 
     def _update_state(self):
         count = len(self._snapshot)
+        self.live_align_button.setText(
+            "Live Align" if self._session_active else "Start Align"
+        )
+        self.live_align_button.setToolTip(
+            "Show or hide live alignment for the current scope."
+            if self._session_active
+            else "Capture the current selection and start live alignment."
+        )
         self.update_selection_button.setVisible(
             self._scope_description != "no active scope"
         )
