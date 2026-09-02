@@ -1552,14 +1552,18 @@ def _activate_panel_widget(widget):
     """Select the stacked page containing an existing alignment widget."""
     child = widget
     parent = child.parentWidget()
+    activated = False
     while parent is not None:
         if isinstance(parent, QtWidgets.QStackedWidget):
             index = parent.indexOf(child)
             if index >= 0:
                 parent.setCurrentIndex(index)
+                activated = True
         child = parent
         parent = child.parentWidget()
-    widget.setFocus()
+    if activated:
+        widget.setFocus()
+    return activated
 
 
 def _activate_properties_tab():
@@ -1591,10 +1595,14 @@ def _activate_properties_tab():
 def show_panel():
     """Open or activate Node Alignment beside Nuke's Properties panel."""
     register_panel()
-    widgets = _alignment_widgets()
-    if widgets:
-        _activate_panel_widget(widgets[0])
-        return widgets[0]
+    for widget in _alignment_widgets():
+        try:
+            if _activate_panel_widget(widget):
+                return widget
+            widget.deleteLater()
+        except RuntimeError:
+            # Nuke can briefly retain a Python wrapper after its tab is closed.
+            continue
     pane = nuke.getPaneFor("Properties.1") or nuke.getPaneFor("Scene Graph")
     panel = nukescripts.panels.registerWidgetAsPanel(
         WIDGET_EXPRESSION, PANEL_TITLE, PANEL_ID, True
