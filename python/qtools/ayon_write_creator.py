@@ -11,6 +11,10 @@ from qtools import ayon_write_rules
 
 
 ELIGIBLE_CLASSES = {"Read", "Write"}
+CREATOR_IDENTIFIERS = {
+    "Render": "create_write_render",
+    "Prerender": "create_write_prerender",
+}
 
 
 def _source_for(node):
@@ -21,6 +25,32 @@ def _source_for(node):
 
 def _selected_candidates():
     return [node for node in nuke.selectedNodes() if node.Class() in ELIGIBLE_CLASSES]
+
+
+def _upstream_read(node):
+    """Return the nearest Read upstream, checking inputs from left to right."""
+    queue = [node]
+    visited = set()
+    while queue:
+        current = queue.pop(0)
+        if current is None or current in visited:
+            continue
+        visited.add(current)
+        if current.Class() == "Read":
+            return current
+        queue.extend(
+            current.input(index)
+            for index in range(current.inputs())
+            if current.input(index) is not None
+        )
+    return None
+
+
+def _read_frame_range(node):
+    read = _upstream_read(node)
+    if read is None:
+        return None
+    return int(read["first"].value()), int(read["last"].value())
 
 
 class PreviewDialog(QtWidgets.QDialog):
@@ -36,6 +66,17 @@ class PreviewDialog(QtWidgets.QDialog):
             "Review the proposed render variants. Native Write nodes remain in "
             "place; their AYON Write will use the same input."
         ))
+
+        options = QtWidgets.QFormLayout()
+        self.creator_combo = QtWidgets.QComboBox()
+        self.creator_combo.addItems(["Render", "Prerender"])
+        options.addRow("AYON Write type:", self.creator_combo)
+        self.match_range_checkbox = QtWidgets.QCheckBox(
+            "Use the upstream Read's first and last frames"
+        )
+        options.addRow("Match frame range:", self.match_range_checkbox)
+        layout.addLayout(options)
+
         self.table = QtWidgets.QTableWidget(len(candidates), 4)
         self.table.setHorizontalHeaderLabels(
             ["Source node", "Filename", "Render variant", "Rule"]
@@ -98,6 +139,12 @@ class PreviewDialog(QtWidgets.QDialog):
             for row in range(self.table.rowCount())
         ]
 
+    def creator_identifier(self):
+        return CREATOR_IDENTIFIERS[self.creator_combo.currentText()]
+
+    def match_frame_range(self):
+        return self.match_range_checkbox.isChecked()
+
 
 def _ayon_api():
     try:
@@ -128,25 +175,31 @@ def _ayon_api():
     }
 
 
-def _write_creator(context):
+def _write_creator(context, identifier="create_write_render"):
     # Newer AYON Nuke versions expose separate Render, Prerender and Image
-    # creators. This tool intentionally creates the Render product.
-    for identifier in ("create_write_render", "create_write"):
-        creator = context.creators.get(identifier)
+    # creators. Older versions used one generic Write creator.
+    identifiers = [identifier]
+    if identifier == "create_write_render":
+        identifiers.append("create_write")
+    for candidate_identifier in identifiers:
+        creator = context.creators.get(candidate_identifier)
         if creator is not None:
             return creator
 
     likely_creators = []
     for candidate in context.creators.values():
-        if getattr(candidate, "identifier", "") == "create_write":
+        if getattr(candidate, "identifier", "") in identifiers:
             return candidate
         label = str(getattr(candidate, "label", "") or "").lower()
         product_type = str(getattr(candidate, "product_type", "") or "").lower()
         class_name = candidate.__class__.__name__.lower()
+        requested_type = (
+            "prerender" if identifier == "create_write_prerender" else "render"
+        )
         if (
-            "write" in label
-            or "write" in class_name
-            or product_type == "write"
+            label == requested_type
+            or product_type == requested_type
+            or requested_type in class_name
         ):
             likely_creators.append(candidate)
 
@@ -167,8 +220,9 @@ def _write_creator(context):
     if len(likely_creators) > 1:
         details += "\n\nMore than one possible Write creator was found."
     raise RuntimeError(
-        "AYON's Create Write creator could not be selected in this session.{}"
-        .format(details)
+        "AYON creator '{}' could not be selected in this session.{}".format(
+            identifier, details
+        )
     )
 
 
@@ -196,6 +250,25 @@ def _create_one(creator, api, source_node, variant):
         pre_create_data={"use_selection": True},
     )
     return _created_node(instance)
+
+
+def _set_frame_range(group_node, frame_range):
+    """Set range knobs on the AYON group and its internal Write node."""
+    first, last = frame_range
+    targets = [group_node]
+    try:
+        targets.extend(nuke.allNodes("Write", group=group_node))
+    except Exception:
+        pass
+
+    for target in targets:
+        knobs = target.knobs()
+        if "first" in knobs:
+            target["first"].setValue(first)
+        if "last" in knobs:
+            target["last"].setValue(last)
+        if "use_limit" in knobs:
+            target["use_limit"].setValue(True)
 
 
 def create_ayon_writes():
@@ -234,7 +307,7 @@ def create_ayon_writes():
         context = api["CreateContext"](
             host=api["host"], headless=True, discover_publish_plugins=False
         )
-        creator = _write_creator(context)
+        creator = _write_creator(context, dialog.creator_identifier())
     except Exception as error:
         nuke.message("Could not initialise AYON Create Write:\n\n{}".format(error))
         return []
@@ -245,10 +318,17 @@ def create_ayon_writes():
         nuke.Undo.begin("Create AYON Writes")
         for candidate, variant in zip(candidates, dialog.variants()):
             try:
+                frame_range = None
+                if dialog.match_frame_range():
+                    frame_range = _read_frame_range(candidate["source"])
+                    if frame_range is None:
+                        raise RuntimeError("no upstream Read node was found")
                 node = _create_one(creator, api, candidate["source"], variant)
                 if node is not None:
                     reference = candidate["node"]
                     node.setXYpos(reference.xpos() + 140, reference.ypos())
+                    if frame_range is not None:
+                        _set_frame_range(node, frame_range)
                     created.append(node)
             except Exception as error:
                 errors.append("{}: {}".format(candidate["node"].name(), error))
