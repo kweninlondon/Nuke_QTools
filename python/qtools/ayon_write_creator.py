@@ -129,13 +129,47 @@ def _ayon_api():
 
 
 def _write_creator(context):
-    creator = context.creators.get("create_write")
-    if creator is not None:
-        return creator
+    # Newer AYON Nuke versions expose separate Render, Prerender and Image
+    # creators. This tool intentionally creates the Render product.
+    for identifier in ("create_write_render", "create_write"):
+        creator = context.creators.get(identifier)
+        if creator is not None:
+            return creator
+
+    likely_creators = []
     for candidate in context.creators.values():
         if getattr(candidate, "identifier", "") == "create_write":
             return candidate
-    raise RuntimeError("AYON's Create Write creator is not available in this session.")
+        label = str(getattr(candidate, "label", "") or "").lower()
+        product_type = str(getattr(candidate, "product_type", "") or "").lower()
+        class_name = candidate.__class__.__name__.lower()
+        if (
+            "write" in label
+            or "write" in class_name
+            or product_type == "write"
+        ):
+            likely_creators.append(candidate)
+
+    if len(likely_creators) == 1:
+        return likely_creators[0]
+
+    available = []
+    for identifier, candidate in context.creators.items():
+        available.append("{} ({})".format(
+            identifier, getattr(candidate, "label", candidate.__class__.__name__)
+        ))
+    disabled = sorted(getattr(context, "disabled_creators", {}) or {})
+    details = "\n\nDiscovered creators:\n{}".format(
+        "\n".join(available) if available else "None"
+    )
+    if disabled:
+        details += "\n\nDisabled creators:\n{}".format("\n".join(disabled))
+    if len(likely_creators) > 1:
+        details += "\n\nMore than one possible Write creator was found."
+    raise RuntimeError(
+        "AYON's Create Write creator could not be selected in this session.{}"
+        .format(details)
+    )
 
 
 def _created_node(instance):

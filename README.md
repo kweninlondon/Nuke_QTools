@@ -178,14 +178,16 @@ When Nuke is launched through AYON, select one or more native Read or Write
 nodes and choose **QTools > Utilities > Create AYON Writes**. A selected Read is
 used as the input of a new AYON Write. For a selected native Write, the AYON
 Write is created alongside it using the same input; the original Write is kept.
+QTools targets AYON's **Render (write)** creator (`create_write_render`), with
+the older generic `create_write` identifier retained as a compatibility fallback.
 
 The preview proposes a render variant from each selected node's filename.
-Choose **Edit rules** to configure ordered filename searches, removable masks,
-and optional fixed variants. In a removal mask, each `#` matches one digit. If
-the fixed variant is empty, the filename text after the matching search term is
-cleaned and used as the variant. For example, a `roto_` rule that removes
-`_v###` converts `BD2_205_010_030_plateFG01_roto_character_v001` to
-`Character`.
+Choose **Edit rules** to configure ordered filename searches, which part of the
+name to keep, removable masks, and optional fixed variants. **Keep Left** and
+**Keep Right** exclude the matched search text; **Keep All** preserves the full
+name. In a removal mask, each `#` matches one digit. A fixed variant overrides
+the derived text. For example, a `roto_` rule with **Keep Right** that removes
+`_v###` converts `BD2_205_010_030_plateFG01_roto_character_v001` to `Character`.
 
 ## Straighten Chain
 

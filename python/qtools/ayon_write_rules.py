@@ -15,9 +15,9 @@ SETTINGS_APPLICATION = "AyonWriteCreator"
 SETTING_RULES = "variant_rules_v1"
 
 DEFAULT_RULES = [
-    {"search": "roto_", "remove": "_v###", "variant": ""},
-    {"search": "matte_", "remove": "_v###", "variant": ""},
-    {"search": "mask_", "remove": "_v###", "variant": ""},
+    {"search": "roto_", "keep": "Right", "remove": "_v###", "variant": ""},
+    {"search": "matte_", "keep": "Right", "remove": "_v###", "variant": ""},
+    {"search": "mask_", "keep": "Right", "remove": "_v###", "variant": ""},
 ]
 
 
@@ -34,6 +34,8 @@ def rules():
                 return [
                     {
                         "search": str(item.get("search", "")).strip(),
+                        # Rules saved by v1 implicitly kept the right side.
+                        "keep": str(item.get("keep", "Right")).strip().title(),
                         "remove": str(item.get("remove", "")).strip(),
                         "variant": str(item.get("variant", "")).strip(),
                     }
@@ -107,9 +109,15 @@ def proposed_variant(text, items=None):
             fixed = clean_variant(rule.get("variant", ""))
             if fixed:
                 return fixed, True
-            remainder = original[index + len(term):]
-            remainder = _remove_patterns(remainder, rule.get("remove", ""))
-            variant = clean_variant(remainder)
+            keep = str(rule.get("keep", "Right")).strip().lower()
+            if keep == "left":
+                kept_text = original[:index]
+            elif keep == "all":
+                kept_text = original
+            else:
+                kept_text = original[index + len(term):]
+            kept_text = _remove_patterns(kept_text, rule.get("remove", ""))
+            variant = clean_variant(kept_text)
             return (variant or clean_variant(original), True)
 
     fallback = _remove_patterns(original, "_v###, v###")
@@ -125,15 +133,15 @@ class RuleEditorDialog(QtWidgets.QDialog):
         self.resize(760, 400)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
-            "Rules are checked top to bottom. Separate alternatives with commas. "
-            "Each # in Remove matches one digit. If Fixed variant is empty, the "
-            "filename text after the matched search becomes the variant."
+            "Rules are checked top to bottom. Keep chooses which side of the "
+            "matched search remains (the search itself is excluded). Each # in "
+            "Remove matches one digit. Fixed variant overrides the result."
         ))
-        self.table = QtWidgets.QTableWidget(0, 3)
+        self.table = QtWidgets.QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
-            ["Filename search", "Remove", "Fixed variant"]
+            ["Filename search", "Keep", "Remove", "Fixed variant"]
         )
-        for column in range(3):
+        for column in range(4):
             self.table.horizontalHeader().setSectionResizeMode(
                 column, QtWidgets.QHeaderView.Stretch
             )
@@ -164,7 +172,14 @@ class RuleEditorDialog(QtWidgets.QDialog):
     def _add_rule(self, rule):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        for column, key in enumerate(("search", "remove", "variant")):
+        self.table.setItem(
+            row, 0, QtWidgets.QTableWidgetItem(rule.get("search", ""))
+        )
+        keep_combo = QtWidgets.QComboBox()
+        keep_combo.addItems(["Right", "Left", "All"])
+        keep_combo.setCurrentText(rule.get("keep", "Right").title())
+        self.table.setCellWidget(row, 1, keep_combo)
+        for column, key in ((2, "remove"), (3, "variant")):
             self.table.setItem(
                 row, column, QtWidgets.QTableWidgetItem(rule.get(key, ""))
             )
@@ -184,12 +199,17 @@ class RuleEditorDialog(QtWidgets.QDialog):
     def _save(self):
         result = []
         for row in range(self.table.rowCount()):
-            values = []
-            for column in range(3):
-                item = self.table.item(row, column)
-                values.append(item.text().strip() if item else "")
-            if values[0]:
-                result.append(dict(zip(("search", "remove", "variant"), values)))
+            search_item = self.table.item(row, 0)
+            remove_item = self.table.item(row, 2)
+            variant_item = self.table.item(row, 3)
+            search = search_item.text().strip() if search_item else ""
+            if search:
+                result.append({
+                    "search": search,
+                    "keep": self.table.cellWidget(row, 1).currentText(),
+                    "remove": remove_item.text().strip() if remove_item else "",
+                    "variant": variant_item.text().strip() if variant_item else "",
+                })
         save_rules(result)
         self.accept()
 
