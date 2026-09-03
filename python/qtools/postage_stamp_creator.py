@@ -59,6 +59,7 @@
 
 import os
 import re
+import textwrap
 
 import nuke
 
@@ -85,7 +86,7 @@ SETTING_FIX_DOT_NAME = "fix_dot_name"
 SETTING_USE_COLOUR = "create_dot_use_colour"
 SETTING_REPLACE_UNDERSCORES = "create_dot_replace_underscores"
 SETTING_CREATE_POSTAGE_STAMP = "create_postage_stamp_after_dot"
-FROM_LABEL_WRAP_LENGTH = 20
+CONNECTOR_LABEL_WRAP_LENGTH = 15
 READ_DOT_SEARCH_DEPTH = 6
 READ_DOT_COLLISION_PADDING = 20
 READ_DOT_MAX_UPWARD_SHIFT = 4000
@@ -101,10 +102,46 @@ def _clean_text(value):
 
 
 def _from_label(name):
-    """Format a Dot source label, wrapping long names after From."""
+    """Format a source label, wrapping long names below a standalone From."""
     name = _clean_text(name)
-    separator = "\n" if len(name) > FROM_LABEL_WRAP_LENGTH else " "
-    return "From{}{}".format(separator, name)
+
+    if len(name) <= CONNECTOR_LABEL_WRAP_LENGTH:
+        return "From {}".format(name)
+
+    lines = textwrap.wrap(
+        name,
+        width=CONNECTOR_LABEL_WRAP_LENGTH,
+        break_long_words=True,
+        break_on_hyphens=False
+    )
+    return "From\n{}".format("\n".join(lines))
+
+
+def _to_label(name):
+    """Format a target label using the same wrapping rule as From labels."""
+    name = _clean_text(name)
+
+    if len(name) <= CONNECTOR_LABEL_WRAP_LENGTH:
+        return "To {}".format(name)
+
+    lines = textwrap.wrap(
+        name,
+        width=CONNECTOR_LABEL_WRAP_LENGTH,
+        break_long_words=True,
+        break_on_hyphens=False
+    )
+    return "To\n{}".format("\n".join(lines))
+
+
+def _matching_to_label(source_label):
+    """Mirror a user's From/To line layout, changing only the prefix."""
+    source_label = str(source_label or "")
+    prefix = re.match(r"^(?:from|to)(?=\s|$)", source_label, re.I)
+
+    if prefix is None:
+        return ""
+
+    return "To{}".format(source_label[prefix.end():])
 
 
 def _settings():
@@ -230,7 +267,17 @@ def _fix_source_dot_label_if_enabled(source):
 
 def _connection_label(source):
     """Build the final label for a target node."""
-    return "To {}".format(_node_display_text(source))
+    if (
+        source is not None
+        and source.Class() == "Dot"
+        and "label" in source.knobs()
+    ):
+        matching_label = _matching_to_label(source["label"].value())
+
+        if matching_label:
+            return matching_label
+
+    return _to_label(_node_display_text(source))
 
 
 def _normalised_label(value):

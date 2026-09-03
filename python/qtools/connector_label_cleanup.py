@@ -2,6 +2,7 @@
 
 import os
 import re
+import textwrap
 
 import nuke
 
@@ -13,7 +14,7 @@ except ImportError:
     from PySide2 import QtCore, QtGui, QtWidgets
 
 
-FROM_LABEL_WRAP_LENGTH = 20
+CONNECTOR_LABEL_WRAP_LENGTH = 15
 _ACTIVE_DIALOG = None
 
 
@@ -40,10 +41,61 @@ def _connector_name(label):
 
 
 def _from_label(name):
-    """Format a Dot source label, wrapping long names after From."""
+    """Format a source label, wrapping long names below a standalone From."""
     name = _clean_text(name)
-    separator = "\n" if len(name) > FROM_LABEL_WRAP_LENGTH else " "
-    return "From{}{}".format(separator, name)
+
+    if len(name) <= CONNECTOR_LABEL_WRAP_LENGTH:
+        return "From {}".format(name)
+
+    lines = textwrap.wrap(
+        name,
+        width=CONNECTOR_LABEL_WRAP_LENGTH,
+        break_long_words=True,
+        break_on_hyphens=False
+    )
+    return "From\n{}".format("\n".join(lines))
+
+
+def _to_label(name):
+    """Format a target label using the same wrapping rule as From labels."""
+    name = _clean_text(name)
+
+    if len(name) <= CONNECTOR_LABEL_WRAP_LENGTH:
+        return "To {}".format(name)
+
+    lines = textwrap.wrap(
+        name,
+        width=CONNECTOR_LABEL_WRAP_LENGTH,
+        break_long_words=True,
+        break_on_hyphens=False
+    )
+    return "To\n{}".format("\n".join(lines))
+
+
+def _matching_to_label(source_label):
+    """Mirror a user's From/To line layout, changing only the prefix."""
+    source_label = str(source_label or "")
+    prefix = re.match(r"^(?:from|to)(?=\s|$)", source_label, re.I)
+
+    if prefix is None:
+        return ""
+
+    return "To{}".format(source_label[prefix.end():])
+
+
+def _resolved_source_label(dot, canonical_name):
+    """Keep an existing From label verbatim when its name is unchanged."""
+    current_label = str(dot["label"].value() or "")
+    comparable_label = current_label.strip()
+
+    if (
+        re.match(r"^from(?=\s|$)", comparable_label, re.I)
+        and _connector_name(comparable_label).lower()
+        == canonical_name.lower()
+    ):
+        return current_label
+
+    return _from_label(canonical_name)
 
 
 def _has_hidden_input(node):
@@ -738,7 +790,7 @@ def _convert_stamp_candidate(candidate, native_name, use_colour=True):
             replacement = nuke.nodes.Dot()
 
         replacement.setInput(0, source_dot)
-        replacement["label"].setValue("To {}".format(native_name))
+        replacement["label"].setValue(_to_label(native_name))
         connector_rules.set_node_colour(replacement, colour)
 
         if "postage_stamp" in replacement.knobs():
@@ -1834,9 +1886,11 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
         try:
             for candidate, canonical_name in resolutions:
-                candidate["dot"]["label"].setValue(
-                    _from_label(canonical_name)
+                source_label = _resolved_source_label(
+                    candidate["dot"],
+                    canonical_name
                 )
+                candidate["dot"]["label"].setValue(source_label)
                 colour_rule = connector_rules.rule_for_name(canonical_name)
                 if self.recolour_checkbox.isChecked():
                     colour = (
@@ -1850,7 +1904,8 @@ class ConnectorCleanupDialog(QtWidgets.QDialog):
 
                 for stamp, _stamp_name in candidate["connections"]:
                     stamp["label"].setValue(
-                        "To {}".format(canonical_name)
+                        _matching_to_label(source_label)
+                        or _to_label(canonical_name)
                     )
 
                     if "hide_input" in stamp.knobs():
