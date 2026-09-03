@@ -191,8 +191,10 @@ Choose **Edit rules** to configure ordered filename searches, which part of the
 name to keep, removable masks, and optional fixed variants. **Keep Left** and
 **Keep Right** exclude the matched search text; **Keep All** preserves the full
 name. In a removal mask, each `#` matches one digit. A fixed variant overrides
-the derived text. For example, a `roto_` rule with **Keep Right** that removes
-`_v###` converts `BD2_205_010_030_plateFG01_roto_character_v001` to `Character`.
+the derived text. **Remove _** controls whether underscores are removed from
+the result for each rule. For example, a `roto_` rule with **Keep Right** that
+removes `_v###` converts
+`BD2_205_010_030_plateFG01_roto_character_v001` to `Character`.
 
 ## Straighten Chain
 

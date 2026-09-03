@@ -15,9 +15,18 @@ SETTINGS_APPLICATION = "AyonWriteCreator"
 SETTING_RULES = "variant_rules_v1"
 
 DEFAULT_RULES = [
-    {"search": "roto_", "keep": "Right", "remove": "_v###", "variant": ""},
-    {"search": "matte_", "keep": "Right", "remove": "_v###", "variant": ""},
-    {"search": "mask_", "keep": "Right", "remove": "_v###", "variant": ""},
+    {
+        "search": "roto_", "keep": "Right", "remove": "_v###",
+        "remove_underscores": True, "variant": "",
+    },
+    {
+        "search": "matte_", "keep": "Right", "remove": "_v###",
+        "remove_underscores": True, "variant": "",
+    },
+    {
+        "search": "mask_", "keep": "Right", "remove": "_v###",
+        "remove_underscores": True, "variant": "",
+    },
 ]
 
 
@@ -37,6 +46,9 @@ def rules():
                         # Rules saved by v1 implicitly kept the right side.
                         "keep": str(item.get("keep", "Right")).strip().title(),
                         "remove": str(item.get("remove", "")).strip(),
+                        "remove_underscores": bool(
+                            item.get("remove_underscores", True)
+                        ),
                         "variant": str(item.get("variant", "")).strip(),
                     }
                     for item in saved
@@ -90,9 +102,10 @@ def source_text(node):
         return str(node.name())
 
 
-def clean_variant(value):
+def clean_variant(value, remove_underscores=True):
     value = re.sub(r"(?:[._-]?%0?\d*d|[._-]?#+)$", "", str(value or ""))
-    value = re.sub(r"[._-]+", " ", value)
+    separators = r"[._-]+" if remove_underscores else r"[.-]+"
+    value = re.sub(separators, " ", value)
     words = [word for word in value.split() if word]
     return "".join(word[:1].upper() + word[1:] for word in words)
 
@@ -106,7 +119,10 @@ def proposed_variant(text, items=None):
             index = lowered.find(term.lower())
             if index < 0:
                 continue
-            fixed = clean_variant(rule.get("variant", ""))
+            remove_underscores = bool(rule.get("remove_underscores", True))
+            fixed = clean_variant(
+                rule.get("variant", ""), remove_underscores
+            )
             if fixed:
                 return fixed, True
             keep = str(rule.get("keep", "Right")).strip().lower()
@@ -117,8 +133,10 @@ def proposed_variant(text, items=None):
             else:
                 kept_text = original[index + len(term):]
             kept_text = _remove_patterns(kept_text, rule.get("remove", ""))
-            variant = clean_variant(kept_text)
-            return (variant or clean_variant(original), True)
+            variant = clean_variant(kept_text, remove_underscores)
+            return (
+                variant or clean_variant(original, remove_underscores), True
+            )
 
     fallback = _remove_patterns(original, "_v###, v###")
     return clean_variant(fallback), False
@@ -135,13 +153,14 @@ class RuleEditorDialog(QtWidgets.QDialog):
         layout.addWidget(QtWidgets.QLabel(
             "Rules are checked top to bottom. Keep chooses which side of the "
             "matched search remains (the search itself is excluded). Each # in "
-            "Remove matches one digit. Fixed variant overrides the result."
+            "Remove matches one digit. Remove _ controls underscore cleanup. "
+            "Fixed variant overrides the result."
         ))
-        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["Filename search", "Keep", "Remove", "Fixed variant"]
+            ["Filename search", "Keep", "Remove", "Remove _", "Fixed variant"]
         )
-        for column in range(4):
+        for column in range(5):
             self.table.horizontalHeader().setSectionResizeMode(
                 column, QtWidgets.QHeaderView.Stretch
             )
@@ -179,10 +198,20 @@ class RuleEditorDialog(QtWidgets.QDialog):
         keep_combo.addItems(["Right", "Left", "All"])
         keep_combo.setCurrentText(rule.get("keep", "Right").title())
         self.table.setCellWidget(row, 1, keep_combo)
-        for column, key in ((2, "remove"), (3, "variant")):
-            self.table.setItem(
-                row, column, QtWidgets.QTableWidgetItem(rule.get(key, ""))
-            )
+        self.table.setItem(
+            row, 2, QtWidgets.QTableWidgetItem(rule.get("remove", ""))
+        )
+        remove_underscores = QtWidgets.QCheckBox()
+        remove_underscores.setChecked(rule.get("remove_underscores", True))
+        checkbox_holder = QtWidgets.QWidget()
+        checkbox_layout = QtWidgets.QHBoxLayout(checkbox_holder)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        checkbox_layout.setAlignment(QtCore.Qt.AlignCenter)
+        checkbox_layout.addWidget(remove_underscores)
+        self.table.setCellWidget(row, 3, checkbox_holder)
+        self.table.setItem(
+            row, 4, QtWidgets.QTableWidgetItem(rule.get("variant", ""))
+        )
 
     def _remove_selected(self):
         rows = sorted(
@@ -201,13 +230,16 @@ class RuleEditorDialog(QtWidgets.QDialog):
         for row in range(self.table.rowCount()):
             search_item = self.table.item(row, 0)
             remove_item = self.table.item(row, 2)
-            variant_item = self.table.item(row, 3)
+            variant_item = self.table.item(row, 4)
             search = search_item.text().strip() if search_item else ""
             if search:
                 result.append({
                     "search": search,
                     "keep": self.table.cellWidget(row, 1).currentText(),
                     "remove": remove_item.text().strip() if remove_item else "",
+                    "remove_underscores": self.table.cellWidget(
+                        row, 3
+                    ).findChild(QtWidgets.QCheckBox).isChecked(),
                     "variant": variant_item.text().strip() if variant_item else "",
                 })
         save_rules(result)
