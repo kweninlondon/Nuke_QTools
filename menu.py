@@ -106,6 +106,12 @@ teleport_menu.addCommand(
 utilities_menu = qtools_menu.addMenu("Utilities")
 
 utilities_menu.addCommand(
+    "Create AYON Writes",
+    "from qtools import ayon_write_creator; "
+    "ayon_write_creator.create_ayon_writes()",
+)
+
+utilities_menu.addCommand(
     "Create Layer Shuffles",
     "from qtools import layer_shuffles; "
     "layer_shuffles.create_layer_shuffles()",

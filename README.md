@@ -172,6 +172,21 @@ speed. The output start frame defaults to the Read node's first frame and can
 be changed in the dialog. If a movie does not expose usable FPS metadata, enter
 the source FPS manually in the dialog.
 
+## Create AYON Writes
+
+When Nuke is launched through AYON, select one or more native Read or Write
+nodes and choose **QTools > Utilities > Create AYON Writes**. A selected Read is
+used as the input of a new AYON Write. For a selected native Write, the AYON
+Write is created alongside it using the same input; the original Write is kept.
+
+The preview proposes a render variant from each selected node's filename.
+Choose **Edit rules** to configure ordered filename searches, removable masks,
+and optional fixed variants. In a removal mask, each `#` matches one digit. If
+the fixed variant is empty, the filename text after the matching search term is
+cleaned and used as the variant. For example, a `roto_` rule that removes
+`_v###` converts `BD2_205_010_030_plateFG01_roto_character_v001` to
+`Character`.
+
 ## Straighten Chain
 
 Select at least two nodes and choose **QTools > Utilities > Straighten Chain...**
