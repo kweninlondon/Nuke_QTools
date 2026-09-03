@@ -191,6 +191,7 @@ def _create_one(creator, api, source_node, variant):
             "folderPath": api["folder_path"],
             "task": api["task_name"],
             "variant": variant,
+            "productType": creator.product_type,
         },
         pre_create_data={"use_selection": True},
     )
