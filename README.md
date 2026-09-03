@@ -180,10 +180,11 @@ used as the input of a new AYON Write. For a selected native Write, the AYON
 Write is created alongside it using the same input; the original Write is kept.
 QTools targets AYON's **Render (write)** creator (`create_write_render`), with
 the older generic `create_write` identifier retained as a compatibility fallback.
-The creation preview can instead target AYON's **Prerender (write)** creator.
-Its optional **Match frame range** setting copies the nearest upstream Read's
-first and last frames to the created group's internal Write, enables its range
-limit, and updates the group's exposed range knobs when they are available.
+Each preview row can instead target AYON's **Prerender (write)** creator and can
+independently enable **Match frame range**. Batch buttons set the type or range
+matching for all rows. Range matching copies the nearest upstream Read's first
+and last frames to the created group's internal Write, enables its range limit,
+and updates the group's exposed range knobs when they are available.
 
 The preview proposes a render variant from each selected node's filename.
 Choose **Edit rules** to configure ordered filename searches, which part of the

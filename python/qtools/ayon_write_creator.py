@@ -60,26 +60,20 @@ class PreviewDialog(QtWidgets.QDialog):
         super(PreviewDialog, self).__init__(parent)
         self.candidates = candidates
         self.setWindowTitle("Create AYON Writes")
-        self.resize(820, max(300, min(650, 175 + len(candidates) * 34)))
+        self.resize(1080, max(300, min(650, 175 + len(candidates) * 34)))
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
             "Review the proposed render variants. Native Write nodes remain in "
             "place; their AYON Write will use the same input."
         ))
-
-        options = QtWidgets.QFormLayout()
-        self.creator_combo = QtWidgets.QComboBox()
-        self.creator_combo.addItems(["Render", "Prerender"])
-        options.addRow("AYON Write type:", self.creator_combo)
-        self.match_range_checkbox = QtWidgets.QCheckBox(
-            "Use the upstream Read's first and last frames"
-        )
-        options.addRow("Match frame range:", self.match_range_checkbox)
-        layout.addLayout(options)
-
-        self.table = QtWidgets.QTableWidget(len(candidates), 4)
+        self.type_combos = []
+        self.range_checkboxes = []
+        self.table = QtWidgets.QTableWidget(len(candidates), 6)
         self.table.setHorizontalHeaderLabels(
-            ["Source node", "Filename", "Render variant", "Rule"]
+            [
+                "Source node", "Filename", "Render variant", "Type",
+                "Match range", "Rule",
+            ]
         )
         self.table.horizontalHeader().setSectionResizeMode(
             1, QtWidgets.QHeaderView.Stretch
@@ -90,18 +84,49 @@ class PreviewDialog(QtWidgets.QDialog):
         for row, item in enumerate(candidates):
             values = (
                 item["node"].name(), item["text"], item["variant"],
-                "Matched" if item["matched"] else "Fallback",
             )
             for column, value in enumerate(values):
                 table_item = QtWidgets.QTableWidgetItem(value)
                 if column != 2:
                     table_item.setFlags(table_item.flags() & ~QtCore.Qt.ItemIsEditable)
                 self.table.setItem(row, column, table_item)
+
+            type_combo = QtWidgets.QComboBox()
+            type_combo.addItems(["Render", "Prerender"])
+            self.table.setCellWidget(row, 3, type_combo)
+            self.type_combos.append(type_combo)
+
+            range_checkbox = QtWidgets.QCheckBox()
+            range_checkbox.setToolTip(
+                "Copy the nearest upstream Read's first/last frames and enable "
+                "Limit to range."
+            )
+            range_holder = QtWidgets.QWidget()
+            range_layout = QtWidgets.QHBoxLayout(range_holder)
+            range_layout.setContentsMargins(0, 0, 0, 0)
+            range_layout.setAlignment(QtCore.Qt.AlignCenter)
+            range_layout.addWidget(range_checkbox)
+            self.table.setCellWidget(row, 4, range_holder)
+            self.range_checkboxes.append(range_checkbox)
+
+            rule_item = QtWidgets.QTableWidgetItem(
+                "Matched" if item["matched"] else "Fallback"
+            )
+            rule_item.setFlags(rule_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            self.table.setItem(row, 5, rule_item)
         layout.addWidget(self.table)
 
         lower = QtWidgets.QHBoxLayout()
         rules_button = QtWidgets.QPushButton("Edit rules...")
         lower.addWidget(rules_button)
+        render_all_button = QtWidgets.QPushButton("All Render")
+        prerender_all_button = QtWidgets.QPushButton("All Prerender")
+        match_all_button = QtWidgets.QPushButton("Match all ranges")
+        clear_ranges_button = QtWidgets.QPushButton("Clear ranges")
+        lower.addWidget(render_all_button)
+        lower.addWidget(prerender_all_button)
+        lower.addWidget(match_all_button)
+        lower.addWidget(clear_ranges_button)
         lower.addStretch()
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -110,6 +135,18 @@ class PreviewDialog(QtWidgets.QDialog):
         lower.addWidget(buttons)
         layout.addLayout(lower)
         rules_button.clicked.connect(self._edit_rules)
+        render_all_button.clicked.connect(
+            lambda _checked=False: self._set_all_types("Render")
+        )
+        prerender_all_button.clicked.connect(
+            lambda _checked=False: self._set_all_types("Prerender")
+        )
+        match_all_button.clicked.connect(
+            lambda _checked=False: self._set_all_ranges(True)
+        )
+        clear_ranges_button.clicked.connect(
+            lambda _checked=False: self._set_all_ranges(False)
+        )
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
 
@@ -119,7 +156,15 @@ class PreviewDialog(QtWidgets.QDialog):
         for row, candidate in enumerate(self.candidates):
             variant, matched = ayon_write_rules.proposed_variant(candidate["text"])
             self.table.item(row, 2).setText(variant)
-            self.table.item(row, 3).setText("Matched" if matched else "Fallback")
+            self.table.item(row, 5).setText("Matched" if matched else "Fallback")
+
+    def _set_all_types(self, creator_type):
+        for combo in self.type_combos:
+            combo.setCurrentText(creator_type)
+
+    def _set_all_ranges(self, enabled):
+        for checkbox in self.range_checkboxes:
+            checkbox.setChecked(enabled)
 
     def _accept_if_valid(self):
         empty = [
@@ -133,17 +178,17 @@ class PreviewDialog(QtWidgets.QDialog):
             return
         self.accept()
 
-    def variants(self):
+    def creation_options(self):
         return [
-            self.table.item(row, 2).text().strip()
+            {
+                "variant": self.table.item(row, 2).text().strip(),
+                "creator_identifier": CREATOR_IDENTIFIERS[
+                    self.type_combos[row].currentText()
+                ],
+                "match_frame_range": self.range_checkboxes[row].isChecked(),
+            }
             for row in range(self.table.rowCount())
         ]
-
-    def creator_identifier(self):
-        return CREATOR_IDENTIFIERS[self.creator_combo.currentText()]
-
-    def match_frame_range(self):
-        return self.match_range_checkbox.isChecked()
 
 
 def _ayon_api():
@@ -307,23 +352,29 @@ def create_ayon_writes():
         context = api["CreateContext"](
             host=api["host"], headless=True, discover_publish_plugins=False
         )
-        creator = _write_creator(context, dialog.creator_identifier())
     except Exception as error:
         nuke.message("Could not initialise AYON Create Write:\n\n{}".format(error))
         return []
 
     created = []
     errors = []
+    creators = {}
     try:
         nuke.Undo.begin("Create AYON Writes")
-        for candidate, variant in zip(candidates, dialog.variants()):
+        for candidate, options in zip(candidates, dialog.creation_options()):
             try:
+                identifier = options["creator_identifier"]
+                if identifier not in creators:
+                    creators[identifier] = _write_creator(context, identifier)
+                creator = creators[identifier]
                 frame_range = None
-                if dialog.match_frame_range():
+                if options["match_frame_range"]:
                     frame_range = _read_frame_range(candidate["source"])
                     if frame_range is None:
                         raise RuntimeError("no upstream Read node was found")
-                node = _create_one(creator, api, candidate["source"], variant)
+                node = _create_one(
+                    creator, api, candidate["source"], options["variant"]
+                )
                 if node is not None:
                     reference = candidate["node"]
                     node.setXYpos(reference.xpos() + 140, reference.ypos())
