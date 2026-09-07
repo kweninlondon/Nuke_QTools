@@ -208,18 +208,13 @@ def _create_reconcile_group(axis_input, camera, corners, x, y):
             axis_input.name(), camera.name()
         ),
     )
-    group.addKnob(nuke.Tab_Knob("projection", "Projection"))
-    for index, corner_name in enumerate(CORNER_NAMES, 1):
-        group.addKnob(nuke.XY_Knob(
-            "corner{}".format(index), "{} corner".format(corner_name)
-        ))
     _set_position(group, x, y)
 
     group.begin()
     try:
         # Set numbers explicitly: Nuke can otherwise reorder Group inputs.
-        axis_node = nuke.nodes.Input(name="Axis_Input")
-        camera_node = nuke.nodes.Input(name="Camera_Input")
+        axis_node = nuke.nodes.Input(name="Axis_Input", number=0)
+        camera_node = nuke.nodes.Input(name="Camera_Input", number=1)
         for input_node, number in (
             (axis_node, 0), (camera_node, 1),
         ):
@@ -232,8 +227,15 @@ def _create_reconcile_group(axis_input, camera, corners, x, y):
             corner_axis = nuke.nodes.Axis2(
                 name="CornerAxis_{}".format(corner_name),
                 label="{} corner\ndriven by input Axis".format(corner_name),
+                inputs=[axis_node],
             )
             corner_axis.setInput(0, axis_node)
+            if corner_axis.input(0) is not axis_node:
+                raise RuntimeError(
+                    "Nuke did not connect {} to the Axis input.".format(
+                        corner_axis.name()
+                    )
+                )
             for component, value in enumerate(point):
                 corner_axis["translate"].setValue(float(value), component)
             corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
@@ -248,27 +250,43 @@ def _create_reconcile_group(axis_input, camera, corners, x, y):
             reconcile.setInput(2, format_node)
             reconcile["calc_output"].setValue(True)
             reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 150)
-            for component, suffix in enumerate(("x", "y")):
-                group["corner{}".format(index)].setExpression(
-                    "Corner_{}.output.{}".format(corner_name, suffix), component
-                )
     finally:
         group.end()
     group.setInput(0, axis_input)
     group.setInput(1, camera)
+    if group.input(0) is not axis_input or group.input(1) is not camera:
+        raise RuntimeError("Nuke did not preserve the Group's Axis/Camera input order.")
     return group
 
 
+def _reconcile_path(group, corner_index):
+    return "{}.Corner_{}".format(
+        group.fullName(), CORNER_NAMES[corner_index - 1]
+    )
+
+
+def _reconcile_node(group, corner_index):
+    node = nuke.toNode(_reconcile_path(group, corner_index))
+    if node is None:
+        raise RuntimeError(
+            "Could not resolve internal {} Reconcile3D.".format(
+                CORNER_NAMES[corner_index - 1]
+            )
+        )
+    return node
+
+
 def _set_live_corner(corner_pin, knob_name, group, corner_index):
+    reconcile_path = _reconcile_path(group, corner_index)
     for component, suffix in enumerate(("x", "y")):
         corner_pin[knob_name].setExpression(
-            "{}.corner{}.{}".format(group.name(), corner_index, suffix), component
+            "{}.output.{}".format(reconcile_path, suffix), component
         )
 
 
 def _set_baked_corner(corner_pin, knob_name, group, corner_index):
     knob = corner_pin[knob_name]
-    source = group["corner{}".format(corner_index)]
+    source = _reconcile_node(group, corner_index)["output"]
     for component in range(2):
         knob.setAnimated(component)
         for frame in range(int(nuke.root().firstFrame()), int(nuke.root().lastFrame()) + 1):
@@ -335,9 +353,9 @@ def create_stabilizer():
                     corner_pin, "from{}".format(index), projection_group, index
                 )
             for component in range(2):
-                value = projection_group["corner{}".format(index)].getValueAt(
-                    reference_frame, component
-                )
+                value = _reconcile_node(projection_group, index)[
+                    "output"
+                ].getValueAt(reference_frame, component)
                 corner_pin["to{}".format(index)].setValue(float(value), component)
 
         for node in nuke.selectedNodes():
