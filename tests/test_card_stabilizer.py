@@ -134,6 +134,12 @@ class CardStabilizerTests(unittest.TestCase):
         finally:
             self.module.nuke.toNode = original
 
+    def test_three_by_three_determinant_uses_column_vectors(self):
+        self.assertEqual(
+            self.module._determinant3(((2, 0, 0), (0, 3, 0), (0, 0, 4))),
+            24,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

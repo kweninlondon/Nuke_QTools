@@ -141,12 +141,57 @@ def _axis_frustum_corners(axis, camera, reference_frame):
         (-half_width, half_height, -depth),
     )
     result = []
-    world_to_axis = axis_world.inverse()
     for x, y, z in local_corners:
-        world_point = camera_world * nuke.math.Vector4(x, y, z, 1.0)
-        point = world_to_axis * world_point
+        point = camera_world * nuke.math.Vector4(x, y, z, 1.0)
         result.append((point.x, point.y, point.z))
     return result
+
+
+def _determinant3(columns):
+    a, b, c = columns
+    return (
+        a[0] * (b[1] * c[2] - b[2] * c[1])
+        - b[0] * (a[1] * c[2] - a[2] * c[1])
+        + c[0] * (a[1] * b[2] - a[2] * b[1])
+    )
+
+
+def _world_position(node, frame):
+    matrix = node["world_matrix"]
+    return tuple(float(matrix.getValueAt(frame, index)) for index in (3, 7, 11))
+
+
+def _world_points_to_parent_local(parent, world_points, frame):
+    """Use Nuke's own Axis evaluation to preserve world positions on parenting."""
+    probe = nuke.nodes.Axis2(name=_unique_name("CardStabilize_ParentProbe"))
+    try:
+        probe.setInput(1, parent)
+        if probe.input(1) is not parent:
+            raise ValueError("Nuke could not connect the selected Axis as a parent.")
+        probe["translate"].setValue((0.0, 0.0, 0.0))
+        origin = _world_position(probe, frame)
+        basis = []
+        for component in range(3):
+            probe["translate"].setValue((0.0, 0.0, 0.0))
+            probe["translate"].setValue(1.0, component)
+            position = _world_position(probe, frame)
+            basis.append(tuple(position[i] - origin[i] for i in range(3)))
+        determinant = _determinant3(basis)
+        if abs(determinant) < 1e-12:
+            raise ValueError("The selected Axis has a singular world transform.")
+        result = []
+        for world_point in world_points:
+            delta = tuple(world_point[i] - origin[i] for i in range(3))
+            result.append(tuple(
+                _determinant3(
+                    tuple(delta if column == component else basis[column]
+                          for column in range(3))
+                ) / determinant
+                for component in range(3)
+            ))
+        return result
+    finally:
+        nuke.delete(probe)
 
 
 def _plane_corners(plane, camera=None, reference_frame=None):
@@ -164,7 +209,12 @@ def _plane_corners(plane, camera=None, reference_frame=None):
             aspect = _format_aspect()
             orientation = "XY"
         else:
-            return _axis_frustum_corners(plane, camera, reference_frame), plane
+            world_corners = _axis_frustum_corners(
+                plane, camera, reference_frame
+            )
+            return _world_points_to_parent_local(
+                plane, world_corners, reference_frame
+            ), plane
 
     half_width = 0.5
     half_height = 0.5 / aspect
