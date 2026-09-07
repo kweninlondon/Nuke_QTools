@@ -245,9 +245,12 @@ def _options():
         return None
     value = panel.value("Reference frame")
     try:
-        frame = float(value)
+        numeric_frame = float(value)
     except (TypeError, ValueError):
-        raise ValueError("Reference frame must be a number.")
+        raise ValueError("Reference frame must be a whole frame number.")
+    if not math.isfinite(numeric_frame) or not numeric_frame.is_integer():
+        raise ValueError("Reference frame must be a whole frame number.")
+    frame = int(numeric_frame)
     if not math.isfinite(frame):
         raise ValueError("Reference frame must be a finite number.")
     return {
@@ -269,10 +272,12 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
         ),
     )
     group.addKnob(nuke.Tab_Knob("card_stabilizer", "Card Stabilizer"))
-    reference_knob = nuke.Double_Knob("reference_frame", "Reference frame")
+    reference_knob = nuke.Int_Knob("reference_frame", "Reference frame")
     reference_knob.setValue(reference_frame)
+    reference_knob.setFlag(nuke.STARTLINE)
     group.addKnob(reference_knob)
     update_knob = nuke.PyScript_Knob("update_corners", "Update")
+    update_knob.clearFlag(nuke.STARTLINE)
     update_knob.setCommand(
         "from qtools import card_stabilizer; "
         "card_stabilizer.update_group(nuke.thisNode())"
@@ -280,6 +285,7 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
     group.addKnob(update_knob)
     link_knob = nuke.Boolean_Knob("link_expression", "Link expression")
     link_knob.setValue(True)
+    link_knob.setFlag(nuke.STARTLINE)
     group.addKnob(link_knob)
     stabilise_knob = nuke.PyScript_Knob(
         "create_stabilise", "Create Stabilise CornerPin"
@@ -288,6 +294,7 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
         "from qtools import card_stabilizer; "
         "card_stabilizer.create_from_group(nuke.thisNode(), False)"
     )
+    stabilise_knob.clearFlag(nuke.STARTLINE)
     group.addKnob(stabilise_knob)
     matchmove_knob = nuke.PyScript_Knob(
         "create_match_move", "Create Match Move CornerPin"
@@ -296,6 +303,7 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
         "from qtools import card_stabilizer; "
         "card_stabilizer.create_from_group(nuke.thisNode(), True)"
     )
+    matchmove_knob.setFlag(nuke.STARTLINE)
     group.addKnob(matchmove_knob)
     apply_knob = nuke.PyScript_Knob(
         "apply_expressions", "Apply expressions (bake linked CornerPins)"
@@ -304,6 +312,7 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
         "from qtools import card_stabilizer; "
         "card_stabilizer.apply_expressions(nuke.thisNode())"
     )
+    apply_knob.setFlag(nuke.STARTLINE)
     group.addKnob(apply_knob)
     _set_position(group, x, y)
 
@@ -448,7 +457,7 @@ def create_from_group(group, match_move=False):
     if not update_group(group):
         return None
     reference_frame = float(group["reference_frame"].value())
-    reference_points = _reference_points(group, reference_frame)
+    _reference_points(group, reference_frame)
     linked = bool(group["link_expression"].value())
     mode = "Match Move" if match_move else "Stabilise"
     corner_pin = nuke.nodes.CornerPin2D(
@@ -465,8 +474,13 @@ def create_from_group(group, match_move=False):
         else:
             _set_baked_corner(corner_pin, "from{}".format(index), group, index)
         for component in range(2):
+            # Sample the finished source knob itself so the reference frame is
+            # guaranteed to be an identity even after expression resolution.
+            value = corner_pin["from{}".format(index)].getValueAt(
+                reference_frame, component
+            )
             corner_pin["to{}".format(index)].setValue(
-                reference_points[index - 1][component], component
+                float(value), component
             )
     return corner_pin
 
@@ -532,45 +546,12 @@ def create_stabilizer():
         )
         projection_group["link_expression"].setValue(options["live"])
         created.append(projection_group)
-
-        reference_points = _reference_points(projection_group, reference_frame)
-
-        mode = options["mode"]
-        node_name = _unique_name(
-            "Card_Stabilise" if mode == "Stabilise" else "Card_MatchMove"
+        corner_pin = create_from_group(
+            projection_group, options["mode"] == "Match Move"
         )
-        corner_pin = nuke.nodes.CornerPin2D(
-            name=node_name,
-            label=(
-                "{} · reference frame {} · {}\n"
-                "Connect the rendered plate/card here"
-            ).format(
-                mode.upper(), reference_frame,
-                "LINKED" if options["live"] else "BAKED",
-            ),
-        )
-        corner_pin["invert"].setValue(mode == "Match Move")
-        _set_position(
-            corner_pin,
-            start_x,
-            top_y + 170,
-        )
+        if corner_pin is None:
+            raise RuntimeError("The initial CornerPin could not be created.")
         created.append(corner_pin)
-
-        # The moving projection is the source/from side. CornerPin invert turns
-        # the same mapping into its match-move counterpart.
-        for index in range(1, 5):
-            if options["live"]:
-                _set_live_corner(
-                    corner_pin, "from{}".format(index), projection_group, index
-                )
-            else:
-                _set_baked_corner(
-                    corner_pin, "from{}".format(index), projection_group, index
-                )
-            for component in range(2):
-                value = reference_points[index - 1][component]
-                corner_pin["to{}".format(index)].setValue(float(value), component)
 
         for node in nuke.selectedNodes():
             node["selected"].setValue(False)
