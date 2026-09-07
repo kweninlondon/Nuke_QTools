@@ -261,13 +261,50 @@ def _set_position(node, x, y):
     node.setXYpos(int(round(x)), int(round(y)))
 
 
-def _create_reconcile_group(axis_input, camera, corners, x, y):
+def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
     group = nuke.nodes.Group(
         name=_unique_name("CardStabilize_Projection"),
         label="4 corner projections\n{} + {}".format(
             axis_input.name(), camera.name()
         ),
     )
+    group.addKnob(nuke.Tab_Knob("card_stabilizer", "Card Stabilizer"))
+    reference_knob = nuke.Double_Knob("reference_frame", "Reference frame")
+    reference_knob.setValue(reference_frame)
+    group.addKnob(reference_knob)
+    update_knob = nuke.PyScript_Knob("update_corners", "Update")
+    update_knob.setCommand(
+        "from qtools import card_stabilizer; "
+        "card_stabilizer.update_group(nuke.thisNode())"
+    )
+    group.addKnob(update_knob)
+    link_knob = nuke.Boolean_Knob("link_expression", "Link expression")
+    link_knob.setValue(True)
+    group.addKnob(link_knob)
+    stabilise_knob = nuke.PyScript_Knob(
+        "create_stabilise", "Create Stabilise CornerPin"
+    )
+    stabilise_knob.setCommand(
+        "from qtools import card_stabilizer; "
+        "card_stabilizer.create_from_group(nuke.thisNode(), False)"
+    )
+    group.addKnob(stabilise_knob)
+    matchmove_knob = nuke.PyScript_Knob(
+        "create_match_move", "Create Match Move CornerPin"
+    )
+    matchmove_knob.setCommand(
+        "from qtools import card_stabilizer; "
+        "card_stabilizer.create_from_group(nuke.thisNode(), True)"
+    )
+    group.addKnob(matchmove_knob)
+    apply_knob = nuke.PyScript_Knob(
+        "apply_expressions", "Apply expressions (bake linked CornerPins)"
+    )
+    apply_knob.setCommand(
+        "from qtools import card_stabilizer; "
+        "card_stabilizer.apply_expressions(nuke.thisNode())"
+    )
+    group.addKnob(apply_knob)
     _set_position(group, x, y)
 
     group.begin()
@@ -363,6 +400,110 @@ def _set_baked_corner(corner_pin, knob_name, group, corner_index):
             knob.setValueAt(source.getValueAt(frame, component), frame, component)
 
 
+def _reference_points(group, reference_frame):
+    points = []
+    for index in range(1, 5):
+        output = _reconcile_node(group, index)["output"]
+        points.append(tuple(
+            float(output.getValueAt(reference_frame, component))
+            for component in range(2)
+        ))
+    if len({(round(x, 7), round(y, 7)) for x, y in points}) != 4:
+        raise RuntimeError(
+            "The four projected corners are not distinct. Check that the "
+            "Axis is in front of the Camera."
+        )
+    return points
+
+
+def update_group(group):
+    """Rebuild a helper Group's corner Axes at its displayed reference frame."""
+    reference_frame = float(group["reference_frame"].value())
+    plane = group.input(0)
+    camera = group.input(1)
+    if plane is None or camera is None:
+        _message("The helper Group needs its Axis/Card and Camera inputs.")
+        return False
+    try:
+        corners, _axis_input = _plane_corners(plane, camera, reference_frame)
+        group.begin()
+        try:
+            for corner_name, point in zip(CORNER_NAMES, corners):
+                corner_axis = nuke.toNode("CornerAxis_{}".format(corner_name))
+                if corner_axis is None:
+                    raise RuntimeError("A corner Axis is missing from the Group.")
+                for component, value in enumerate(point):
+                    corner_axis["translate"].setValue(float(value), component)
+        finally:
+            group.end()
+        _reference_points(group, reference_frame)
+        return True
+    except Exception as error:
+        _message("Could not update the reference frame:\n{}".format(error))
+        return False
+
+
+def create_from_group(group, match_move=False):
+    """Update ``group`` and create a linked or baked CornerPin from it."""
+    if not update_group(group):
+        return None
+    reference_frame = float(group["reference_frame"].value())
+    reference_points = _reference_points(group, reference_frame)
+    linked = bool(group["link_expression"].value())
+    mode = "Match Move" if match_move else "Stabilise"
+    corner_pin = nuke.nodes.CornerPin2D(
+        name=_unique_name("Card_MatchMove" if match_move else "Card_Stabilise"),
+        label="{} · reference frame {} · {}".format(
+            mode.upper(), reference_frame, "LINKED" if linked else "BAKED"
+        ),
+    )
+    corner_pin["invert"].setValue(bool(match_move))
+    _set_position(corner_pin, group.xpos(), group.ypos() + 170)
+    for index in range(1, 5):
+        if linked:
+            _set_live_corner(corner_pin, "from{}".format(index), group, index)
+        else:
+            _set_baked_corner(corner_pin, "from{}".format(index), group, index)
+        for component in range(2):
+            corner_pin["to{}".format(index)].setValue(
+                reference_points[index - 1][component], component
+            )
+    return corner_pin
+
+
+def apply_expressions(group):
+    """Bake every CornerPin expression linked to ``group`` over the root range."""
+    first = int(nuke.root().firstFrame())
+    last = int(nuke.root().lastFrame())
+    group_path = group.fullName()
+    targets = []
+    for node in nuke.allNodes(recurseGroups=True):
+        if node.Class() != "CornerPin2D":
+            continue
+        if any(group_path in node["from{}".format(index)].toScript()
+               for index in range(1, 5)):
+            targets.append(node)
+    if not targets:
+        _message("No CornerPins linked to this Group were found.")
+        return 0
+    for corner_pin in targets:
+        for index in range(1, 5):
+            knob = corner_pin["from{}".format(index)]
+            values = [
+                tuple(knob.getValueAt(frame, component) for component in range(2))
+                for frame in range(first, last + 1)
+            ]
+            knob.clearAnimated()
+            for component in range(2):
+                knob.setAnimated(component)
+                for frame, value in zip(range(first, last + 1), values):
+                    knob.setValueAt(value[component], frame, component)
+        corner_pin["label"].setValue(
+            corner_pin["label"].value().replace("LINKED", "BAKED")
+        )
+    return len(targets)
+
+
 def create_stabilizer():
     """Create a grouped four-point projection and a CornerPin2D."""
     try:
@@ -387,26 +528,12 @@ def create_stabilizer():
         top_y = max(plane.ypos(), camera.ypos()) + 150
         start_x = min(plane.xpos(), camera.xpos())
         projection_group = _create_reconcile_group(
-            axis_input, camera, corners, start_x, top_y
+            axis_input, camera, corners, reference_frame, start_x, top_y
         )
+        projection_group["link_expression"].setValue(options["live"])
         created.append(projection_group)
 
-        reference_points = []
-        for index in range(1, 5):
-            output = _reconcile_node(projection_group, index)["output"]
-            reference_points.append(tuple(
-                float(output.getValueAt(reference_frame, component))
-                for component in range(2)
-            ))
-        distinct_points = {
-            (round(point[0], 7), round(point[1], 7))
-            for point in reference_points
-        }
-        if len(distinct_points) != 4:
-            raise RuntimeError(
-                "The four projected corners are not distinct. Check that the "
-                "Axis is in front of the Camera and try again."
-            )
+        reference_points = _reference_points(projection_group, reference_frame)
 
         mode = options["mode"]
         node_name = _unique_name(
@@ -419,7 +546,7 @@ def create_stabilizer():
                 "Connect the rendered plate/card here"
             ).format(
                 mode.upper(), reference_frame,
-                "LIVE" if options["live"] else "BAKED",
+                "LINKED" if options["live"] else "BAKED",
             ),
         )
         corner_pin["invert"].setValue(mode == "Match Move")

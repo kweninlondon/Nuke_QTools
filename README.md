@@ -185,6 +185,14 @@ the moving corners to their reference-frame positions; Match Move uses the same
 data with CornerPin invert enabled. Connect the matching ScanlineRender/plate
 image to the generated CornerPin2D.
 
+The helper Group can be reused after creation. Change **Reference frame** and
+click **Update** to reposition its corner Axes. The two create buttons make a
+new Stabilise or Match Move CornerPin and automatically apply the displayed
+reference frame first. **Link expression** chooses live expressions or baked
+animation for newly created CornerPins. **Apply expressions** converts every
+CornerPin currently linked to that Group into animation over the project frame
+range and removes the expressions.
+
 The setup uses the project format, including pixel aspect, for its 2D
 coordinates. Card2 image aspect and XY, YZ, and ZX orientations are supported.
 For an Axis, its position defines depth: the tool creates a world-space plane
