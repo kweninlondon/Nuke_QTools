@@ -17,6 +17,16 @@ def _message(text):
     nuke.message("Card Stabilizer\n\n{}".format(text))
 
 
+def _unique_name(base_name):
+    """Return a root-level node name that does not already exist."""
+    if nuke.toNode(base_name) is None:
+        return base_name
+    suffix = 2
+    while nuke.toNode("{}_{}".format(base_name, suffix)) is not None:
+        suffix += 1
+    return "{}_{}".format(base_name, suffix)
+
+
 def _selection():
     selected = list(nuke.selectedNodes())
     cameras = [node for node in selected if node.Class() in CAMERA_CLASSES]
@@ -203,7 +213,7 @@ def _set_position(node, x, y):
 
 def _create_reconcile_group(axis_input, camera, corners, x, y):
     group = nuke.nodes.Group(
-        name="CardStabilize_Projection",
+        name=_unique_name("CardStabilize_Projection"),
         label="4 corner projections\n{} + {}".format(
             axis_input.name(), camera.name()
         ),
@@ -322,7 +332,9 @@ def create_stabilizer():
         created.append(projection_group)
 
         mode = options["mode"]
-        node_name = "Card_Stabilise" if mode == "Stabilise" else "Card_MatchMove"
+        node_name = _unique_name(
+            "Card_Stabilise" if mode == "Stabilise" else "Card_MatchMove"
+        )
         corner_pin = nuke.nodes.CornerPin2D(
             name=node_name,
             label=(

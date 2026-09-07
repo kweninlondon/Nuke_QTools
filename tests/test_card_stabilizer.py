@@ -61,6 +61,7 @@ class CardStabilizerTests(unittest.TestCase):
     def setUpClass(cls):
         fake_nuke = types.ModuleType("nuke")
         fake_nuke.root = lambda: _Node("Root", format_value=_Format(1920, 1080))
+        fake_nuke.toNode = lambda _name: None
         sys.modules.setdefault("nuke", fake_nuke)
         cls.module = importlib.import_module("qtools.card_stabilizer")
 
@@ -113,6 +114,21 @@ class CardStabilizerTests(unittest.TestCase):
             self.module._enum_name(textual, "projection_mode", ""),
             "perspective",
         )
+
+    def test_unique_name_skips_existing_setups(self):
+        existing = {
+            "CardStabilize_Projection",
+            "CardStabilize_Projection_2",
+        }
+        original = self.module.nuke.toNode
+        self.module.nuke.toNode = lambda name: object() if name in existing else None
+        try:
+            self.assertEqual(
+                self.module._unique_name("CardStabilize_Projection"),
+                "CardStabilize_Projection_3",
+            )
+        finally:
+            self.module.nuke.toNode = original
         self.assertEqual(
             self.module._enum_name(indexed, "projection_mode", ""),
             "perspective",
