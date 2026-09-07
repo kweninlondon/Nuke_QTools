@@ -201,18 +201,7 @@ def _set_position(node, x, y):
     node.setXYpos(int(round(x)), int(round(y)))
 
 
-def _create_format_source(plane, y):
-    source = nuke.nodes.Constant(
-        name="CardStabilize_Format",
-        label="projection format\n[root.format.name]",
-    )
-    if source.knob("hide_input") is not None:
-        source["hide_input"].setValue(True)
-    _set_position(source, plane.xpos() - 180, y)
-    return source
-
-
-def _create_reconcile_group(axis_input, camera, format_source, corners, x, y):
+def _create_reconcile_group(axis_input, camera, corners, x, y):
     group = nuke.nodes.Group(
         name="CardStabilize_Projection",
         label="4 corner projections\n{} + {}".format(
@@ -228,22 +217,37 @@ def _create_reconcile_group(axis_input, camera, format_source, corners, x, y):
 
     group.begin()
     try:
-        axis_node = nuke.nodes.Input(name="Axis_Input", number=0)
-        camera_node = nuke.nodes.Input(name="Camera_Input", number=1)
-        format_node = nuke.nodes.Input(name="Format_Input", number=2)
+        # Set numbers explicitly: Nuke can otherwise reorder Group inputs.
+        axis_node = nuke.nodes.Input(name="Axis_Input")
+        camera_node = nuke.nodes.Input(name="Camera_Input")
+        for input_node, number in (
+            (axis_node, 0), (camera_node, 1),
+        ):
+            input_node["number"].setValue(number)
+        format_node = nuke.nodes.Constant(
+            name="Projection_Format",
+            label="project format for pixel coordinates",
+        )
         for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners), 1):
+            corner_axis = nuke.nodes.Axis2(
+                name="CornerAxis_{}".format(corner_name),
+                label="{} corner\ndriven by input Axis".format(corner_name),
+            )
+            corner_axis.setInput(0, axis_node)
+            for component, value in enumerate(point):
+                corner_axis["translate"].setValue(float(value), component)
+            corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
+
             reconcile = nuke.nodes.Reconcile3D(
                 name="Corner_{}".format(corner_name),
                 label="{} corner".format(corner_name),
             )
             # Native order documented by Foundry: axis, cam, img.
-            reconcile.setInput(0, axis_node)
+            reconcile.setInput(0, corner_axis)
             reconcile.setInput(1, camera_node)
             reconcile.setInput(2, format_node)
-            for component, value in enumerate(point):
-                reconcile["point"].setValue(float(value), component)
             reconcile["calc_output"].setValue(True)
-            reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 100)
+            reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 150)
             for component, suffix in enumerate(("x", "y")):
                 group["corner{}".format(index)].setExpression(
                     "Corner_{}.output.{}".format(corner_name, suffix), component
@@ -252,7 +256,6 @@ def _create_reconcile_group(axis_input, camera, format_source, corners, x, y):
         group.end()
     group.setInput(0, axis_input)
     group.setInput(1, camera)
-    group.setInput(2, format_source)
     return group
 
 
@@ -295,11 +298,8 @@ def create_stabilizer():
     try:
         top_y = max(plane.ypos(), camera.ypos()) + 150
         start_x = min(plane.xpos(), camera.xpos())
-        format_source = _create_format_source(plane, top_y)
-        created.append(format_source)
-
         projection_group = _create_reconcile_group(
-            axis_input, camera, format_source, corners, start_x, top_y
+            axis_input, camera, corners, start_x, top_y
         )
         created.append(projection_group)
 

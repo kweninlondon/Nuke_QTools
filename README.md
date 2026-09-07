@@ -178,7 +178,9 @@ Select exactly one Camera and one classic Card2 or Axis, then choose
 **QTools > Experiment > Stabilize Card / Axis**. Choose the reference frame,
 **Stabilise** or **Match Move**, and whether the moving corners remain **Live**
 or are baked over the project frame range. QTools creates a single helper Group
-containing four Reconcile3D corner projections and a CornerPin2D. Stabilise maps
+with Axis/Card and Camera inputs. Inside are four corner Axis nodes parented to
+the selected Axis/Card, four Reconcile3D projections, and an internal
+project-format Constant. Stabilise maps
 the moving corners to their reference-frame positions; Match Move uses the same
 data with CornerPin invert enabled. Connect the matching ScanlineRender/plate
 image to the generated CornerPin2D.
@@ -188,8 +190,8 @@ coordinates. Card2 image aspect and XY, YZ, and ZX orientations are supported.
 For an Axis, its position defines depth: the tool creates a world-space plane
 that exactly fills the reference Camera frustum at that depth. Its corners are
 stored in Axis-local coordinates, so later Axis animation and parenting remain
-live through the helper Group. Card deformation, Card lens distortion, and the legacy
-Card `z` geometry control are not planar-transform cases and are rejected; use
+live through the helper Group. Card deformation, Card lens distortion, and the
+legacy Card `z` geometry control are not planar-transform cases and are rejected; use
 the Card/Axis transform's translate Z for depth.
 
 The experimental menu also includes **Planar Projection (Vit Sedlacek / Jed
