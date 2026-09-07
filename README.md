@@ -172,6 +172,27 @@ speed. The output start frame defaults to the Read node's first frame and can
 be changed in the dialog. If a movie does not expose usable FPS metadata, enter
 the source FPS manually in the dialog.
 
+## Stabilize Card / Axis
+
+Select exactly one Camera and one classic Card2 or Axis, then choose
+**QTools > Experiment > Stabilize Card / Axis**. Enter the stabilization
+reference frame. QTools creates four live Reconcile3D corner projections and a
+CornerPin2D that maps the moving card corners to their fixed positions at that
+frame. Connect the matching ScanlineRender/plate image to the generated
+CornerPin2D.
+
+The setup uses the project format, including pixel aspect, for its 2D
+coordinates. Card2 image aspect and XY, YZ, and ZX orientations are supported.
+For an Axis, its position defines depth: the tool creates a world-space plane
+that exactly fills the reference Camera frustum at that depth. Card deformation,
+Card lens distortion, and the legacy
+Card `z` geometry control are not planar-transform cases and are rejected; use
+the Card/Axis transform's translate Z for depth.
+
+The experimental menu also includes **Planar Projection (Vit Sedlacek / Jed
+Smith)**, bundled from Jed Smith's published PlanarProjection gist with its
+original in-tool attribution intact.
+
 ## Create AYON Writes
 
 When Nuke is launched through AYON, select one or more native Read or Write

@@ -133,6 +133,18 @@ utilities_menu.addCommand(
     "Ctrl+Alt+A",
 )
 
+experiment_menu = qtools_menu.addMenu("Experiment")
+
+experiment_menu.addCommand(
+    "Stabilize Card / Axis",
+    "from qtools import card_stabilizer; card_stabilizer.create_stabilizer()",
+)
+
+experiment_menu.addCommand(
+    "Planar Projection (Vit Sedlacek / Jed Smith)",
+    "from qtools import planar_projection; planar_projection.create_group()",
+)
+
 script_cleanup_menu = qtools_menu.addMenu("Script Cleanup")
 
 script_cleanup_menu.addCommand(
