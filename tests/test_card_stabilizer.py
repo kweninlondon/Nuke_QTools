@@ -114,6 +114,10 @@ class CardStabilizerTests(unittest.TestCase):
             self.module._enum_name(textual, "projection_mode", ""),
             "perspective",
         )
+        self.assertEqual(
+            self.module._enum_name(indexed, "projection_mode", ""),
+            "perspective",
+        )
 
     def test_unique_name_skips_existing_setups(self):
         existing = {
@@ -129,10 +133,6 @@ class CardStabilizerTests(unittest.TestCase):
             )
         finally:
             self.module.nuke.toNode = original
-        self.assertEqual(
-            self.module._enum_name(indexed, "projection_mode", ""),
-            "perspective",
-        )
 
 
 if __name__ == "__main__":
