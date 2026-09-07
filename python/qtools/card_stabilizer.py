@@ -131,8 +131,10 @@ def _axis_frustum_corners(axis, camera, reference_frame):
         (-half_width, half_height, -depth),
     )
     result = []
+    world_to_axis = axis_world.inverse()
     for x, y, z in local_corners:
-        point = camera_world * nuke.math.Vector4(x, y, z, 1.0)
+        world_point = camera_world * nuke.math.Vector4(x, y, z, 1.0)
+        point = world_to_axis * world_point
         result.append((point.x, point.y, point.z))
     return result
 
@@ -152,7 +154,7 @@ def _plane_corners(plane, camera=None, reference_frame=None):
             aspect = _format_aspect()
             orientation = "XY"
         else:
-            return _axis_frustum_corners(plane, camera, reference_frame), None
+            return _axis_frustum_corners(plane, camera, reference_frame), plane
 
     half_width = 0.5
     half_height = 0.5 / aspect
@@ -174,17 +176,25 @@ def _plane_corners(plane, camera=None, reference_frame=None):
     raise ValueError("Unsupported Card orientation: {}".format(orientation))
 
 
-def _reference_frame():
-    value = nuke.getInput("Stabilization reference frame", str(nuke.frame()))
-    if value is None:
+def _options():
+    panel = nuke.Panel("Card / Axis Transform")
+    panel.addSingleLineInput("Reference frame", str(nuke.frame()))
+    panel.addEnumerationPulldown("Mode", "Stabilise Match Move")
+    panel.addBooleanCheckBox("Live transform", True)
+    if not panel.show():
         return None
+    value = panel.value("Reference frame")
     try:
         frame = float(value)
     except (TypeError, ValueError):
         raise ValueError("Reference frame must be a number.")
     if not math.isfinite(frame):
         raise ValueError("Reference frame must be a finite number.")
-    return frame
+    return {
+        "reference_frame": frame,
+        "mode": str(panel.value("Mode")),
+        "live": bool(panel.value("Live transform")),
+    }
 
 
 def _set_position(node, x, y):
@@ -202,39 +212,77 @@ def _create_format_source(plane, y):
     return source
 
 
-def _create_reconcile(axis_input, camera, format_source, point, corner_name, x, y):
-    reconcile = nuke.nodes.Reconcile3D(
-        name="CardStabilize_{}".format(corner_name),
-        label="{} corner\nlive projection".format(corner_name),
+def _create_reconcile_group(axis_input, camera, format_source, corners, x, y):
+    group = nuke.nodes.Group(
+        name="CardStabilize_Projection",
+        label="4 corner projections\n{} + {}".format(
+            axis_input.name(), camera.name()
+        ),
     )
-    # Native order documented by Foundry: axis, cam, img.
-    reconcile.setInput(0, axis_input)
-    reconcile.setInput(1, camera)
-    reconcile.setInput(2, format_source)
-    for component, value in enumerate(point):
-        reconcile["point"].setValue(float(value), component)
-    reconcile["calc_output"].setValue(True)
-    _set_position(reconcile, x, y)
-    return reconcile
+    group.addKnob(nuke.Tab_Knob("projection", "Projection"))
+    for index, corner_name in enumerate(CORNER_NAMES, 1):
+        group.addKnob(nuke.XY_Knob(
+            "corner{}".format(index), "{} corner".format(corner_name)
+        ))
+    _set_position(group, x, y)
+
+    group.begin()
+    try:
+        axis_node = nuke.nodes.Input(name="Axis_Input", number=0)
+        camera_node = nuke.nodes.Input(name="Camera_Input", number=1)
+        format_node = nuke.nodes.Input(name="Format_Input", number=2)
+        for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners), 1):
+            reconcile = nuke.nodes.Reconcile3D(
+                name="Corner_{}".format(corner_name),
+                label="{} corner".format(corner_name),
+            )
+            # Native order documented by Foundry: axis, cam, img.
+            reconcile.setInput(0, axis_node)
+            reconcile.setInput(1, camera_node)
+            reconcile.setInput(2, format_node)
+            for component, value in enumerate(point):
+                reconcile["point"].setValue(float(value), component)
+            reconcile["calc_output"].setValue(True)
+            reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 100)
+            for component, suffix in enumerate(("x", "y")):
+                group["corner{}".format(index)].setExpression(
+                    "Corner_{}.output.{}".format(corner_name, suffix), component
+                )
+    finally:
+        group.end()
+    group.setInput(0, axis_input)
+    group.setInput(1, camera)
+    group.setInput(2, format_source)
+    return group
 
 
-def _set_live_corner(corner_pin, knob_name, reconcile):
+def _set_live_corner(corner_pin, knob_name, group, corner_index):
     for component, suffix in enumerate(("x", "y")):
         corner_pin[knob_name].setExpression(
-            "{}.output.{}".format(reconcile.name(), suffix), component
+            "{}.corner{}.{}".format(group.name(), corner_index, suffix), component
         )
 
 
+def _set_baked_corner(corner_pin, knob_name, group, corner_index):
+    knob = corner_pin[knob_name]
+    source = group["corner{}".format(corner_index)]
+    for component in range(2):
+        knob.setAnimated(component)
+        for frame in range(int(nuke.root().firstFrame()), int(nuke.root().lastFrame()) + 1):
+            knob.setValueAt(source.getValueAt(frame, component), frame, component)
+
+
 def create_stabilizer():
-    """Create four Reconcile3Ds and a stabilizing CornerPin2D."""
+    """Create a grouped four-point projection and a CornerPin2D."""
     try:
         plane, camera = _selection()
-        reference_frame = _reference_frame()
+        options = _options()
     except ValueError as error:
         _message(error)
         return []
-    if reference_frame is None:
+    if options is None:
         return []
+    reference_frame = options["reference_frame"]
     try:
         corners, axis_input = _plane_corners(plane, camera, reference_frame)
     except ValueError as error:
@@ -250,35 +298,46 @@ def create_stabilizer():
         format_source = _create_format_source(plane, top_y)
         created.append(format_source)
 
-        reconciles = []
-        for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners)):
-            reconcile = _create_reconcile(
-                axis_input, camera, format_source, point, corner_name,
-                start_x + index * HORIZONTAL_SPACING, top_y,
-            )
-            reconciles.append(reconcile)
-            created.append(reconcile)
-
-        corner_pin = nuke.nodes.CornerPin2D(
-            name="Card_Stabilize",
-            label=(
-                "STABILIZED at frame {}\n"
-                "Connect the rendered plate/card here"
-            ).format(reference_frame),
+        projection_group = _create_reconcile_group(
+            axis_input, camera, format_source, corners, start_x, top_y
         )
+        created.append(projection_group)
+
+        mode = options["mode"]
+        node_name = "Card_Stabilise" if mode == "Stabilise" else "Card_MatchMove"
+        corner_pin = nuke.nodes.CornerPin2D(
+            name=node_name,
+            label=(
+                "{} · reference frame {} · {}\n"
+                "Connect the rendered plate/card here"
+            ).format(
+                mode.upper(), reference_frame,
+                "LIVE" if options["live"] else "BAKED",
+            ),
+        )
+        corner_pin["invert"].setValue(mode == "Match Move")
         _set_position(
             corner_pin,
-            start_x + (3 * HORIZONTAL_SPACING) / 2,
+            start_x,
             top_y + 170,
         )
         created.append(corner_pin)
 
-        # Stabilization maps the live card quadrilateral (source/from) to the
-        # frozen reference quadrilateral (destination/to).
-        for index, reconcile in enumerate(reconciles, 1):
-            _set_live_corner(corner_pin, "from{}".format(index), reconcile)
+        # The moving projection is the source/from side. CornerPin invert turns
+        # the same mapping into its match-move counterpart.
+        for index in range(1, 5):
+            if options["live"]:
+                _set_live_corner(
+                    corner_pin, "from{}".format(index), projection_group, index
+                )
+            else:
+                _set_baked_corner(
+                    corner_pin, "from{}".format(index), projection_group, index
+                )
             for component in range(2):
-                value = reconcile["output"].getValueAt(reference_frame, component)
+                value = projection_group["corner{}".format(index)].getValueAt(
+                    reference_frame, component
+                )
                 corner_pin["to{}".format(index)].setValue(float(value), component)
 
         for node in nuke.selectedNodes():
