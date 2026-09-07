@@ -178,9 +178,9 @@ Select exactly one Camera and one classic Card2 or Axis, then choose
 **QTools > Experiment > Stabilize Card / Axis**. Choose the reference frame,
 **Stabilise** or **Match Move**, and whether the moving corners remain **Live**
 or are baked over the project frame range. QTools creates a single helper Group
-with Axis/Card and Camera inputs. Inside are four corner Axis nodes parented to
-the selected Axis/Card, four Reconcile3D projections, and an internal
-project-format Constant. Stabilise maps
+with Axis/Card and Camera inputs. Inside are four Reconcile3D projections; each
+stores one distinct corner in the connected Axis/Card's local coordinates.
+Stabilise maps
 the moving corners to their reference-frame positions; Match Move uses the same
 data with CornerPin invert enabled. Connect the matching ScanlineRender/plate
 image to the generated CornerPin2D.

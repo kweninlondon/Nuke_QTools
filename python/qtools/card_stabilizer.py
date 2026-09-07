@@ -229,37 +229,25 @@ def _create_reconcile_group(axis_input, camera, corners, x, y):
             (axis_node, 0), (camera_node, 1),
         ):
             input_node["number"].setValue(number)
-        format_node = nuke.nodes.Constant(
-            name="Projection_Format",
-            label="project format for pixel coordinates",
-        )
         for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners), 1):
-            corner_axis = nuke.nodes.Axis2(
-                name="CornerAxis_{}".format(corner_name),
-                label="{} corner\ndriven by input Axis".format(corner_name),
-                inputs=[axis_node],
-            )
-            corner_axis.setInput(0, axis_node)
-            if corner_axis.input(0) is not axis_node:
-                raise RuntimeError(
-                    "Nuke did not connect {} to the Axis input.".format(
-                        corner_axis.name()
-                    )
-                )
-            for component, value in enumerate(point):
-                corner_axis["translate"].setValue(float(value), component)
-            corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
-
             reconcile = nuke.nodes.Reconcile3D(
                 name="Corner_{}".format(corner_name),
-                label="{} corner".format(corner_name),
+                label="{} corner\nAxis-local point".format(corner_name),
             )
-            # Native order documented by Foundry: axis, cam, img.
-            reconcile.setInput(0, corner_axis)
+            # Nuke 16's classic Reconcile3D exposes Axis and Camera sockets.
+            # Its point knob is evaluated in the connected Axis's local space.
+            reconcile.setInput(0, axis_node)
             reconcile.setInput(1, camera_node)
-            reconcile.setInput(2, format_node)
+            for component, value in enumerate(point):
+                reconcile["point"].setValue(float(value), component)
             reconcile["calc_output"].setValue(True)
-            reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 150)
+            reconcile.setXYpos((index - 1) * HORIZONTAL_SPACING, 100)
+            if reconcile.input(0) is not axis_node:
+                raise RuntimeError(
+                    "Nuke did not connect the Axis to {}.".format(
+                        reconcile.name()
+                    )
+                )
     finally:
         group.end()
     group.setInput(0, axis_input)
@@ -331,6 +319,23 @@ def create_stabilizer():
         )
         created.append(projection_group)
 
+        reference_points = []
+        for index in range(1, 5):
+            output = _reconcile_node(projection_group, index)["output"]
+            reference_points.append(tuple(
+                float(output.getValueAt(reference_frame, component))
+                for component in range(2)
+            ))
+        distinct_points = {
+            (round(point[0], 7), round(point[1], 7))
+            for point in reference_points
+        }
+        if len(distinct_points) != 4:
+            raise RuntimeError(
+                "The four projected corners are not distinct. Check that the "
+                "Axis is in front of the Camera and try again."
+            )
+
         mode = options["mode"]
         node_name = _unique_name(
             "Card_Stabilise" if mode == "Stabilise" else "Card_MatchMove"
@@ -365,9 +370,7 @@ def create_stabilizer():
                     corner_pin, "from{}".format(index), projection_group, index
                 )
             for component in range(2):
-                value = _reconcile_node(projection_group, index)[
-                    "output"
-                ].getValueAt(reference_frame, component)
+                value = reference_points[index - 1][component]
                 corner_pin["to{}".format(index)].setValue(float(value), component)
 
         for node in nuke.selectedNodes():
