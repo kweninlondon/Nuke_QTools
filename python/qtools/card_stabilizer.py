@@ -165,8 +165,8 @@ def _world_points_to_parent_local(parent, world_points, frame):
     """Use Nuke's own Axis evaluation to preserve world positions on parenting."""
     probe = nuke.nodes.Axis2(name=_unique_name("CardStabilize_ParentProbe"))
     try:
-        probe.setInput(1, parent)
-        if probe.input(1) is not parent:
+        probe.setInput(0, parent)
+        if probe.input(0) is not parent:
             raise ValueError("Nuke could not connect the selected Axis as a parent.")
         probe["translate"].setValue((0.0, 0.0, 0.0))
         origin = _world_position(probe, frame)
@@ -288,12 +288,12 @@ def _create_reconcile_group(axis_input, camera, corners, x, y):
                 name="CornerAxis_{}".format(corner_name),
                 label="{} corner\ndriven by input Axis".format(corner_name),
             )
-            # Axis2 scripting order is look=0, parent axis=1.
-            corner_axis.setInput(1, axis_node)
+            # Axis2 scripting order in classic Nuke is parent axis=0, look=1.
+            corner_axis.setInput(0, axis_node)
             for component, value in enumerate(point):
                 corner_axis["translate"].setValue(float(value), component)
             corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
-            if corner_axis.input(1) is not axis_node:
+            if corner_axis.input(0) is not axis_node:
                 raise RuntimeError(
                     "Nuke did not parent {} to the Axis input.".format(
                         corner_axis.name()
