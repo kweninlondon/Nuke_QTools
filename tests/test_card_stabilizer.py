@@ -102,6 +102,22 @@ class CardStabilizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "translate Z"):
             self.module._plane_corners(card)
 
+    def test_projection_mode_accepts_text_or_index(self):
+        textual = _Node("Camera2", {
+            "projection_mode": _Knob("perspective"),
+        })
+        indexed = _Node("Camera2", {
+            "projection_mode": _Knob(0, ["perspective", "orthographic"]),
+        })
+        self.assertEqual(
+            self.module._enum_name(textual, "projection_mode", ""),
+            "perspective",
+        )
+        self.assertEqual(
+            self.module._enum_name(indexed, "projection_mode", ""),
+            "perspective",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

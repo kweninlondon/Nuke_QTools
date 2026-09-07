@@ -93,7 +93,8 @@ def _matrix_at(node, knob_name, frame):
 
 def _axis_frustum_corners(axis, camera, reference_frame):
     """Return a reference-camera frustum plane through the Axis position."""
-    if int(_knob_value(camera, "projection_mode", 0)) != 0:
+    projection_mode = _enum_name(camera, "projection_mode", "perspective")
+    if projection_mode.strip().lower() not in ("perspective", "0"):
         raise ValueError("Axis frustum mode currently requires a perspective Camera.")
     for name, expected in (
         ("winroll", 0.0), ("win_translate", (0.0, 0.0)),
