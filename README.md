@@ -215,12 +215,14 @@ Write is created alongside it using the same input; the original Write is kept.
 QTools targets AYON's **Render (write)** creator (`create_write_render`), with
 the older generic `create_write` identifier retained as a compatibility fallback.
 Each preview row can instead target AYON's **Prerender (write)** creator and can
-independently choose **ZIP1** or **DWAA** EXR compression, choose **All**, **RGBa**,
-or **RGB** channels, and enable **Match frame range**. These output choices are
-applied to the Write node inside the created AYON group. Batch buttons set the
-type or range matching for all rows. Range matching copies the nearest upstream
-Read's first and last frames to the created group's internal Write, enables its
-range limit, and updates the group's exposed range knobs when they are available.
+independently choose **ZIP1** or **DWAA** EXR compression, choose **all**, **rgba**,
+or **rgb** channels, toggle **Autocrop** (enabled by default), and enable **Match
+frame range**. These output choices are applied to the Write node inside the
+created AYON group. Select multiple rows to edit any dropdown or checkbox across
+the selection. Batch buttons set the type or range matching for all rows. Range
+matching copies the nearest upstream Read's first and last frames to the created
+group's internal Write, enables its range limit, and updates the group's exposed
+range knobs when they are available.
 
 The preview proposes a render variant from each selected node's filename.
 Choose **Edit rules** to configure ordered filename searches, which part of the

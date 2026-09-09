@@ -20,9 +20,9 @@ EXR_COMPRESSION_VALUES = {
     "DWAA": "DWAA",
 }
 CHANNEL_VALUES = {
-    "All": "all",
-    "RGBa": "rgba",
-    "RGB": "rgb",
+    "all": "all",
+    "rgba": "rgba",
+    "rgb": "rgb",
 }
 
 
@@ -69,7 +69,7 @@ class PreviewDialog(QtWidgets.QDialog):
         super(PreviewDialog, self).__init__(parent)
         self.candidates = candidates
         self.setWindowTitle("Create AYON Writes")
-        self.resize(1280, max(300, min(650, 175 + len(candidates) * 34)))
+        self.resize(1380, max(300, min(650, 175 + len(candidates) * 34)))
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
             "Review the proposed render variants. Native Write nodes remain in "
@@ -78,12 +78,16 @@ class PreviewDialog(QtWidgets.QDialog):
         self.type_combos = []
         self.compression_combos = []
         self.channel_combos = []
+        self.autocrop_checkboxes = []
         self.range_checkboxes = []
-        self.table = QtWidgets.QTableWidget(len(candidates), 8)
+        self._updating_selected_rows = False
+        self.table = QtWidgets.QTableWidget(len(candidates), 9)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.setHorizontalHeaderLabels(
             [
                 "Source node", "Filename", "Render variant", "Type",
-                "Compression", "Channels", "Match range", "Rule",
+                "Compression", "Channels", "Autocrop", "Match range", "Rule",
             ]
         )
         self.table.horizontalHeader().setSectionResizeMode(
@@ -106,35 +110,62 @@ class PreviewDialog(QtWidgets.QDialog):
             type_combo.addItems(["Render", "Prerender"])
             self.table.setCellWidget(row, 3, type_combo)
             self.type_combos.append(type_combo)
+            type_combo.currentTextChanged.connect(
+                lambda value, source_row=row: self._sync_combo(
+                    source_row, self.type_combos, value
+                )
+            )
 
             compression_combo = QtWidgets.QComboBox()
             compression_combo.addItems(["ZIP1", "DWAA"])
             self.table.setCellWidget(row, 4, compression_combo)
             self.compression_combos.append(compression_combo)
+            compression_combo.currentTextChanged.connect(
+                lambda value, source_row=row: self._sync_combo(
+                    source_row, self.compression_combos, value
+                )
+            )
 
             channel_combo = QtWidgets.QComboBox()
-            channel_combo.addItems(["All", "RGBa", "RGB"])
+            channel_combo.addItems(["all", "rgba", "rgb"])
             self.table.setCellWidget(row, 5, channel_combo)
             self.channel_combos.append(channel_combo)
+            channel_combo.currentTextChanged.connect(
+                lambda value, source_row=row: self._sync_combo(
+                    source_row, self.channel_combos, value
+                )
+            )
+
+            autocrop_checkbox = QtWidgets.QCheckBox()
+            autocrop_checkbox.setChecked(True)
+            autocrop_holder = self._checkbox_holder(autocrop_checkbox)
+            self.table.setCellWidget(row, 6, autocrop_holder)
+            self.autocrop_checkboxes.append(autocrop_checkbox)
+            autocrop_checkbox.stateChanged.connect(
+                lambda _state, source_row=row: self._sync_checkbox(
+                    source_row, self.autocrop_checkboxes
+                )
+            )
 
             range_checkbox = QtWidgets.QCheckBox()
             range_checkbox.setToolTip(
                 "Copy the nearest upstream Read's first/last frames and enable "
                 "Limit to range."
             )
-            range_holder = QtWidgets.QWidget()
-            range_layout = QtWidgets.QHBoxLayout(range_holder)
-            range_layout.setContentsMargins(0, 0, 0, 0)
-            range_layout.setAlignment(QtCore.Qt.AlignCenter)
-            range_layout.addWidget(range_checkbox)
-            self.table.setCellWidget(row, 6, range_holder)
+            range_holder = self._checkbox_holder(range_checkbox)
+            self.table.setCellWidget(row, 7, range_holder)
             self.range_checkboxes.append(range_checkbox)
+            range_checkbox.stateChanged.connect(
+                lambda _state, source_row=row: self._sync_checkbox(
+                    source_row, self.range_checkboxes
+                )
+            )
 
             rule_item = QtWidgets.QTableWidgetItem(
                 "Matched" if item["matched"] else "Fallback"
             )
             rule_item.setFlags(rule_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.table.setItem(row, 7, rule_item)
+            self.table.setItem(row, 8, rule_item)
         layout.addWidget(self.table)
 
         lower = QtWidgets.QHBoxLayout()
@@ -171,13 +202,55 @@ class PreviewDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
 
+    @staticmethod
+    def _checkbox_holder(checkbox):
+        holder = QtWidgets.QWidget()
+        holder_layout = QtWidgets.QHBoxLayout(holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.setAlignment(QtCore.Qt.AlignCenter)
+        holder_layout.addWidget(checkbox)
+        return holder
+
+    def _selected_rows_for(self, source_row):
+        rows = {index.row() for index in self.table.selectionModel().selectedRows()}
+        return rows if source_row in rows and len(rows) > 1 else set()
+
+    def _sync_combo(self, source_row, combos, value):
+        if self._updating_selected_rows:
+            return
+        rows = self._selected_rows_for(source_row)
+        if not rows:
+            return
+        self._updating_selected_rows = True
+        try:
+            for row in rows:
+                if row != source_row:
+                    combos[row].setCurrentText(value)
+        finally:
+            self._updating_selected_rows = False
+
+    def _sync_checkbox(self, source_row, checkboxes):
+        if self._updating_selected_rows:
+            return
+        rows = self._selected_rows_for(source_row)
+        if not rows:
+            return
+        checked = checkboxes[source_row].isChecked()
+        self._updating_selected_rows = True
+        try:
+            for row in rows:
+                if row != source_row:
+                    checkboxes[row].setChecked(checked)
+        finally:
+            self._updating_selected_rows = False
+
     def _edit_rules(self):
         if ayon_write_rules.edit_rules(self) != QtWidgets.QDialog.Accepted:
             return
         for row, candidate in enumerate(self.candidates):
             variant, matched = ayon_write_rules.proposed_variant(candidate["text"])
             self.table.item(row, 2).setText(variant)
-            self.table.item(row, 7).setText("Matched" if matched else "Fallback")
+            self.table.item(row, 8).setText("Matched" if matched else "Fallback")
 
     def _set_all_types(self, creator_type):
         for combo in self.type_combos:
@@ -208,6 +281,7 @@ class PreviewDialog(QtWidgets.QDialog):
                 ],
                 "compression": self.compression_combos[row].currentText(),
                 "channels": self.channel_combos[row].currentText(),
+                "autocrop": self.autocrop_checkboxes[row].isChecked(),
                 "match_frame_range": self.range_checkboxes[row].isChecked(),
             }
             for row in range(self.table.rowCount())
@@ -339,7 +413,7 @@ def _set_frame_range(group_node, frame_range):
             target["use_limit"].setValue(True)
 
 
-def _set_write_options(group_node, compression, channels):
+def _set_write_options(group_node, compression, channels, autocrop):
     """Set output options on every Write node inside an AYON Write group."""
     write_nodes = nuke.allNodes("Write", group=group_node)
     for write_node in write_nodes:
@@ -350,6 +424,8 @@ def _set_write_options(group_node, compression, channels):
             )
         if "channels" in knobs:
             write_node["channels"].setValue(CHANNEL_VALUES[channels])
+        if "autocrop" in knobs:
+            write_node["autocrop"].setValue(autocrop)
 
 
 def create_ayon_writes():
@@ -415,7 +491,10 @@ def create_ayon_writes():
                     reference = candidate["node"]
                     node.setXYpos(reference.xpos() + 140, reference.ypos())
                     _set_write_options(
-                        node, options["compression"], options["channels"]
+                        node,
+                        options["compression"],
+                        options["channels"],
+                        options["autocrop"],
                     )
                     if frame_range is not None:
                         _set_frame_range(node, frame_range)
