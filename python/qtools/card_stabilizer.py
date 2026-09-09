@@ -427,7 +427,7 @@ def _reference_points(group, reference_frame):
 
 def update_group(group):
     """Rebuild a helper Group's corner Axes at its displayed reference frame."""
-    reference_frame = float(group["reference_frame"].value())
+    reference_frame = int(group["reference_frame"].value())
     plane = group.input(0)
     camera = group.input(1)
     if plane is None or camera is None:
@@ -456,7 +456,7 @@ def create_from_group(group, match_move=False):
     """Update ``group`` and create a linked or baked CornerPin from it."""
     if not update_group(group):
         return None
-    reference_frame = float(group["reference_frame"].value())
+    reference_frame = int(group["reference_frame"].value())
     _reference_points(group, reference_frame)
     linked = bool(group["link_expression"].value())
     mode = "Match Move" if match_move else "Stabilise"
@@ -489,14 +489,13 @@ def apply_expressions(group):
     """Bake every CornerPin expression linked to ``group`` over the root range."""
     first = int(nuke.root().firstFrame())
     last = int(nuke.root().lastFrame())
-    group_path = group.fullName()
-    targets = []
-    for node in nuke.allNodes(recurseGroups=True):
-        if node.Class() != "CornerPin2D":
-            continue
-        if any(group_path in node["from{}".format(index)].toScript()
-               for index in range(1, 5)):
-            targets.append(node)
+    # This is the same relationship Nuke displays with green expression arrows.
+    # Searching serialized knob text is unreliable because Group paths may be
+    # rewritten or escaped internally.
+    targets = [
+        node for node in group.dependent(nuke.EXPRESSIONS)
+        if node.Class() == "CornerPin2D"
+    ]
     if not targets:
         _message("No CornerPins linked to this Group were found.")
         return 0

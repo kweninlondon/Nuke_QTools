@@ -15,6 +15,15 @@ CREATOR_IDENTIFIERS = {
     "Render": "create_write_render",
     "Prerender": "create_write_prerender",
 }
+EXR_COMPRESSION_VALUES = {
+    "ZIP1": "Zip (1 scanline)",
+    "DWAA": "DWAA",
+}
+CHANNEL_VALUES = {
+    "All": "all",
+    "RGBa": "rgba",
+    "RGB": "rgb",
+}
 
 
 def _source_for(node):
@@ -60,19 +69,21 @@ class PreviewDialog(QtWidgets.QDialog):
         super(PreviewDialog, self).__init__(parent)
         self.candidates = candidates
         self.setWindowTitle("Create AYON Writes")
-        self.resize(1080, max(300, min(650, 175 + len(candidates) * 34)))
+        self.resize(1280, max(300, min(650, 175 + len(candidates) * 34)))
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(
             "Review the proposed render variants. Native Write nodes remain in "
             "place; their AYON Write will use the same input."
         ))
         self.type_combos = []
+        self.compression_combos = []
+        self.channel_combos = []
         self.range_checkboxes = []
-        self.table = QtWidgets.QTableWidget(len(candidates), 6)
+        self.table = QtWidgets.QTableWidget(len(candidates), 8)
         self.table.setHorizontalHeaderLabels(
             [
                 "Source node", "Filename", "Render variant", "Type",
-                "Match range", "Rule",
+                "Compression", "Channels", "Match range", "Rule",
             ]
         )
         self.table.horizontalHeader().setSectionResizeMode(
@@ -96,6 +107,16 @@ class PreviewDialog(QtWidgets.QDialog):
             self.table.setCellWidget(row, 3, type_combo)
             self.type_combos.append(type_combo)
 
+            compression_combo = QtWidgets.QComboBox()
+            compression_combo.addItems(["ZIP1", "DWAA"])
+            self.table.setCellWidget(row, 4, compression_combo)
+            self.compression_combos.append(compression_combo)
+
+            channel_combo = QtWidgets.QComboBox()
+            channel_combo.addItems(["All", "RGBa", "RGB"])
+            self.table.setCellWidget(row, 5, channel_combo)
+            self.channel_combos.append(channel_combo)
+
             range_checkbox = QtWidgets.QCheckBox()
             range_checkbox.setToolTip(
                 "Copy the nearest upstream Read's first/last frames and enable "
@@ -106,14 +127,14 @@ class PreviewDialog(QtWidgets.QDialog):
             range_layout.setContentsMargins(0, 0, 0, 0)
             range_layout.setAlignment(QtCore.Qt.AlignCenter)
             range_layout.addWidget(range_checkbox)
-            self.table.setCellWidget(row, 4, range_holder)
+            self.table.setCellWidget(row, 6, range_holder)
             self.range_checkboxes.append(range_checkbox)
 
             rule_item = QtWidgets.QTableWidgetItem(
                 "Matched" if item["matched"] else "Fallback"
             )
             rule_item.setFlags(rule_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.table.setItem(row, 5, rule_item)
+            self.table.setItem(row, 7, rule_item)
         layout.addWidget(self.table)
 
         lower = QtWidgets.QHBoxLayout()
@@ -156,7 +177,7 @@ class PreviewDialog(QtWidgets.QDialog):
         for row, candidate in enumerate(self.candidates):
             variant, matched = ayon_write_rules.proposed_variant(candidate["text"])
             self.table.item(row, 2).setText(variant)
-            self.table.item(row, 5).setText("Matched" if matched else "Fallback")
+            self.table.item(row, 7).setText("Matched" if matched else "Fallback")
 
     def _set_all_types(self, creator_type):
         for combo in self.type_combos:
@@ -185,6 +206,8 @@ class PreviewDialog(QtWidgets.QDialog):
                 "creator_identifier": CREATOR_IDENTIFIERS[
                     self.type_combos[row].currentText()
                 ],
+                "compression": self.compression_combos[row].currentText(),
+                "channels": self.channel_combos[row].currentText(),
                 "match_frame_range": self.range_checkboxes[row].isChecked(),
             }
             for row in range(self.table.rowCount())
@@ -316,6 +339,19 @@ def _set_frame_range(group_node, frame_range):
             target["use_limit"].setValue(True)
 
 
+def _set_write_options(group_node, compression, channels):
+    """Set output options on every Write node inside an AYON Write group."""
+    write_nodes = nuke.allNodes("Write", group=group_node)
+    for write_node in write_nodes:
+        knobs = write_node.knobs()
+        if "compression" in knobs:
+            write_node["compression"].setValue(
+                EXR_COMPRESSION_VALUES[compression]
+            )
+        if "channels" in knobs:
+            write_node["channels"].setValue(CHANNEL_VALUES[channels])
+
+
 def create_ayon_writes():
     """Create AYON Write nodes for the selected Reads/native Writes."""
     selected = list(nuke.selectedNodes())
@@ -378,6 +414,9 @@ def create_ayon_writes():
                 if node is not None:
                     reference = candidate["node"]
                     node.setXYpos(reference.xpos() + 140, reference.ypos())
+                    _set_write_options(
+                        node, options["compression"], options["channels"]
+                    )
                     if frame_range is not None:
                         _set_frame_range(node, frame_range)
                     created.append(node)
