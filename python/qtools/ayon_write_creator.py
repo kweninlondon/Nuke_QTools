@@ -80,6 +80,7 @@ class PreviewDialog(QtWidgets.QDialog):
         self.channel_combos = []
         self.autocrop_checkboxes = []
         self.range_checkboxes = []
+        self._control_rows = {}
         self._updating_selected_rows = False
         self.table = QtWidgets.QTableWidget(len(candidates), 9)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -110,6 +111,7 @@ class PreviewDialog(QtWidgets.QDialog):
             type_combo.addItems(["Render", "Prerender"])
             self.table.setCellWidget(row, 3, type_combo)
             self.type_combos.append(type_combo)
+            self._watch_control(type_combo, row)
             type_combo.currentTextChanged.connect(
                 lambda value, source_row=row: self._sync_combo(
                     source_row, self.type_combos, value
@@ -120,6 +122,7 @@ class PreviewDialog(QtWidgets.QDialog):
             compression_combo.addItems(["ZIP1", "DWAA"])
             self.table.setCellWidget(row, 4, compression_combo)
             self.compression_combos.append(compression_combo)
+            self._watch_control(compression_combo, row)
             compression_combo.currentTextChanged.connect(
                 lambda value, source_row=row: self._sync_combo(
                     source_row, self.compression_combos, value
@@ -130,6 +133,7 @@ class PreviewDialog(QtWidgets.QDialog):
             channel_combo.addItems(["all", "rgba", "rgb"])
             self.table.setCellWidget(row, 5, channel_combo)
             self.channel_combos.append(channel_combo)
+            self._watch_control(channel_combo, row)
             channel_combo.currentTextChanged.connect(
                 lambda value, source_row=row: self._sync_combo(
                     source_row, self.channel_combos, value
@@ -141,6 +145,7 @@ class PreviewDialog(QtWidgets.QDialog):
             autocrop_holder = self._checkbox_holder(autocrop_checkbox)
             self.table.setCellWidget(row, 6, autocrop_holder)
             self.autocrop_checkboxes.append(autocrop_checkbox)
+            self._watch_control(autocrop_checkbox, row)
             autocrop_checkbox.stateChanged.connect(
                 lambda _state, source_row=row: self._sync_checkbox(
                     source_row, self.autocrop_checkboxes
@@ -155,6 +160,7 @@ class PreviewDialog(QtWidgets.QDialog):
             range_holder = self._checkbox_holder(range_checkbox)
             self.table.setCellWidget(row, 7, range_holder)
             self.range_checkboxes.append(range_checkbox)
+            self._watch_control(range_checkbox, row)
             range_checkbox.stateChanged.connect(
                 lambda _state, source_row=row: self._sync_checkbox(
                     source_row, self.range_checkboxes
@@ -210,6 +216,36 @@ class PreviewDialog(QtWidgets.QDialog):
         holder_layout.setAlignment(QtCore.Qt.AlignCenter)
         holder_layout.addWidget(checkbox)
         return holder
+
+    def _watch_control(self, control, row):
+        self._control_rows[control] = row
+        control.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        """Keep a multi-row selection while using an embedded row control."""
+        if (
+            watched in self._control_rows
+            and event.type() == QtCore.QEvent.MouseButtonPress
+        ):
+            row = self._control_rows[watched]
+            rows = {
+                index.row()
+                for index in self.table.selectionModel().selectedRows()
+            }
+            if row in rows and len(rows) > 1:
+                QtCore.QTimer.singleShot(
+                    0, lambda selected=tuple(rows): self._restore_selection(selected)
+                )
+        return super(PreviewDialog, self).eventFilter(watched, event)
+
+    def _restore_selection(self, rows):
+        self.table.clearSelection()
+        last_column = self.table.columnCount() - 1
+        for row in rows:
+            selection = QtWidgets.QTableWidgetSelectionRange(
+                row, 0, row, last_column
+            )
+            self.table.setRangeSelected(selection, True)
 
     def _selected_rows_for(self, source_row):
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
