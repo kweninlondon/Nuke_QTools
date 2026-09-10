@@ -11,6 +11,7 @@ CAMERA_CLASSES = {"Camera", "Camera2", "Camera3"}
 PLANE_CLASSES = {"Card2", "Axis", "Axis2", "Axis3"}
 CORNER_NAMES = ("BL", "BR", "TR", "TL")
 HORIZONTAL_SPACING = 120
+CARD_GEOMETRY_MODES = ("FOV", "Card corners")
 
 
 def _message(text):
@@ -194,11 +195,20 @@ def _world_points_to_parent_local(parent, world_points, frame):
         nuke.delete(probe)
 
 
-def _plane_corners(plane, camera=None, reference_frame=None):
+def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card corners"):
     """Return corners and the node that supplies their local transform."""
     is_card = plane.Class() == "Card2"
     if is_card:
         _validate_card(plane)
+        if card_mode == "FOV" and camera is not None and reference_frame is not None:
+            world_corners = _axis_frustum_corners(
+                plane, camera, reference_frame
+            )
+            return _world_points_to_parent_local(
+                plane, world_corners, reference_frame
+            ), plane
+        if card_mode not in CARD_GEOMETRY_MODES:
+            raise ValueError("Unsupported Card mode: {}".format(card_mode))
         image = plane.input(0)
         use_image_aspect = bool(_knob_value(plane, "image_aspect", True))
         aspect = _format_aspect(image) if use_image_aspect else 1.0
@@ -216,8 +226,11 @@ def _plane_corners(plane, camera=None, reference_frame=None):
                 plane, world_corners, reference_frame
             ), plane
 
-    half_width = 0.5
-    half_height = 0.5 / aspect
+    # Card2's image-aspect geometry is ``aspect x 1`` in local space.  Using
+    # ``1 x 1/aspect`` has the same ratio but not the same Card vertices, so
+    # child Axes end up incorrectly pulled in towards the Card centre.
+    half_width = 0.5 * aspect
+    half_height = 0.5
     uv_corners = (
         (-half_width, -half_height),
         (half_width, -half_height),
@@ -236,10 +249,12 @@ def _plane_corners(plane, camera=None, reference_frame=None):
     raise ValueError("Unsupported Card orientation: {}".format(orientation))
 
 
-def _options():
+def _options(plane):
     panel = nuke.Panel("Card / Axis Transform")
     panel.addSingleLineInput("Reference frame", str(nuke.frame()))
     panel.addEnumerationPulldown("Mode", "Stabilise Match Move")
+    if plane.Class() == "Card2":
+        panel.addEnumerationPulldown("Card mode", "FOV {Card corners}")
     panel.addBooleanCheckBox("Live transform", True)
     if not panel.show():
         return None
@@ -256,6 +271,10 @@ def _options():
     return {
         "reference_frame": frame,
         "mode": str(panel.value("Mode")),
+        "card_mode": (
+            str(panel.value("Card mode"))
+            if plane.Class() == "Card2" else "Card corners"
+        ),
         "live": bool(panel.value("Live transform")),
     }
 
@@ -264,7 +283,9 @@ def _set_position(node, x, y):
     node.setXYpos(int(round(x)), int(round(y)))
 
 
-def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
+def _create_reconcile_group(
+    axis_input, camera, corners, reference_frame, x, y, card_mode="Card corners"
+):
     group = nuke.nodes.Group(
         name=_unique_name("CardStabilize_Projection"),
         label="4 corner projections\n{} + {}".format(
@@ -276,6 +297,17 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
     reference_knob.setValue(reference_frame)
     reference_knob.setFlag(nuke.STARTLINE)
     group.addKnob(reference_knob)
+    is_card = axis_input.Class() == "Card2"
+    if is_card:
+        card_mode_knob = nuke.Enumeration_Knob(
+            "card_mode", "Card mode", list(CARD_GEOMETRY_MODES)
+        )
+        card_mode_knob.setValue(card_mode)
+        card_mode_knob.setTooltip(
+            "FOV uses a camera-facing frame through the Card centre. Card corners "
+            "uses the Card's actual geometry."
+        )
+        group.addKnob(card_mode_knob)
     update_knob = nuke.PyScript_Knob("update_corners", "Update")
     update_knob.clearFlag(nuke.STARTLINE)
     update_knob.setCommand(
@@ -305,6 +337,16 @@ def _create_reconcile_group(axis_input, camera, corners, reference_frame, x, y):
     )
     matchmove_knob.setFlag(nuke.STARTLINE)
     group.addKnob(matchmove_knob)
+    if is_card:
+        match_card_knob = nuke.PyScript_Knob(
+            "create_match_card", "Create Match Card CornerPin"
+        )
+        match_card_knob.setCommand(
+            "from qtools import card_stabilizer; "
+            "card_stabilizer.create_from_group(nuke.thisNode(), match_card=True)"
+        )
+        match_card_knob.clearFlag(nuke.STARTLINE)
+        group.addKnob(match_card_knob)
     apply_knob = nuke.PyScript_Knob(
         "apply_expressions", "Apply expressions (bake linked CornerPins)"
     )
@@ -434,7 +476,13 @@ def update_group(group):
         _message("The helper Group needs its Axis/Card and Camera inputs.")
         return False
     try:
-        corners, _axis_input = _plane_corners(plane, camera, reference_frame)
+        card_mode = (
+            _enum_name(group, "card_mode", "Card corners")
+            if plane.Class() == "Card2" else "Card corners"
+        )
+        corners, _axis_input = _plane_corners(
+            plane, camera, reference_frame, card_mode
+        )
         group.begin()
         try:
             for corner_name, point in zip(CORNER_NAMES, corners):
@@ -452,36 +500,52 @@ def update_group(group):
         return False
 
 
-def create_from_group(group, match_move=False):
+def _project_format_corners():
+    format_value = nuke.root().format()
+    width = float(format_value.width())
+    height = float(format_value.height())
+    return ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height))
+
+
+def create_from_group(group, match_move=False, match_card=False):
     """Update ``group`` and create a linked or baked CornerPin from it."""
     if not update_group(group):
         return None
     reference_frame = int(group["reference_frame"].value())
     _reference_points(group, reference_frame)
     linked = bool(group["link_expression"].value())
-    mode = "Match Move" if match_move else "Stabilise"
+    if match_move and match_card:
+        raise ValueError("A CornerPin cannot be both Match Move and Match Card.")
+    mode = "Match Card" if match_card else ("Match Move" if match_move else "Stabilise")
     corner_pin = nuke.nodes.CornerPin2D(
-        name=_unique_name("Card_MatchMove" if match_move else "Card_Stabilise"),
+        name=_unique_name(
+            "Card_MatchCard" if match_card else
+            ("Card_MatchMove" if match_move else "Card_Stabilise")
+        ),
         label="{} · reference frame {} · {}".format(
             mode.upper(), reference_frame, "LINKED" if linked else "BAKED"
         ),
     )
     corner_pin["invert"].setValue(bool(match_move))
     _set_position(corner_pin, group.xpos(), group.ypos() + 170)
+    format_corners = _project_format_corners() if match_card else None
     for index in range(1, 5):
+        animated_knob = "to{}".format(index) if match_card else "from{}".format(index)
         if linked:
-            _set_live_corner(corner_pin, "from{}".format(index), group, index)
+            _set_live_corner(corner_pin, animated_knob, group, index)
         else:
-            _set_baked_corner(corner_pin, "from{}".format(index), group, index)
-        for component in range(2):
-            # Sample the finished source knob itself so the reference frame is
-            # guaranteed to be an identity even after expression resolution.
-            value = corner_pin["from{}".format(index)].getValueAt(
-                reference_frame, component
-            )
-            corner_pin["to{}".format(index)].setValue(
-                float(value), component
-            )
+            _set_baked_corner(corner_pin, animated_knob, group, index)
+        if match_card:
+            for component, value in enumerate(format_corners[index - 1]):
+                corner_pin["from{}".format(index)].setValue(value, component)
+        else:
+            for component in range(2):
+                # Sample the finished source knob itself so the reference frame is
+                # guaranteed to be an identity even after expression resolution.
+                value = corner_pin["from{}".format(index)].getValueAt(
+                    reference_frame, component
+                )
+                corner_pin["to{}".format(index)].setValue(float(value), component)
     return corner_pin
 
 
@@ -501,16 +565,19 @@ def apply_expressions(group):
         return 0
     for corner_pin in targets:
         for index in range(1, 5):
-            knob = corner_pin["from{}".format(index)]
-            values = [
-                tuple(knob.getValueAt(frame, component) for component in range(2))
-                for frame in range(first, last + 1)
-            ]
-            knob.clearAnimated()
-            for component in range(2):
-                knob.setAnimated(component)
-                for frame, value in zip(range(first, last + 1), values):
-                    knob.setValueAt(value[component], frame, component)
+            for prefix in ("from", "to"):
+                knob = corner_pin["{}{}".format(prefix, index)]
+                if not knob.hasExpression():
+                    continue
+                values = [
+                    tuple(knob.getValueAt(frame, component) for component in range(2))
+                    for frame in range(first, last + 1)
+                ]
+                knob.clearAnimated()
+                for component in range(2):
+                    knob.setAnimated(component)
+                    for frame, value in zip(range(first, last + 1), values):
+                        knob.setValueAt(value[component], frame, component)
         corner_pin["label"].setValue(
             corner_pin["label"].value().replace("LINKED", "BAKED")
         )
@@ -521,7 +588,7 @@ def create_stabilizer():
     """Create a grouped four-point projection and a CornerPin2D."""
     try:
         plane, camera = _selection()
-        options = _options()
+        options = _options(plane)
     except ValueError as error:
         _message(error)
         return []
@@ -529,7 +596,10 @@ def create_stabilizer():
         return []
     reference_frame = options["reference_frame"]
     try:
-        corners, axis_input = _plane_corners(plane, camera, reference_frame)
+        card_mode = options["card_mode"] if plane.Class() == "Card2" else "Card corners"
+        corners, axis_input = _plane_corners(
+            plane, camera, reference_frame, card_mode
+        )
     except ValueError as error:
         _message(error)
         return []
@@ -541,7 +611,7 @@ def create_stabilizer():
         top_y = max(plane.ypos(), camera.ypos()) + 150
         start_x = min(plane.xpos(), camera.xpos())
         projection_group = _create_reconcile_group(
-            axis_input, camera, corners, reference_frame, start_x, top_y
+            axis_input, camera, corners, reference_frame, start_x, top_y, card_mode
         )
         projection_group["link_expression"].setValue(options["live"])
         created.append(projection_group)

@@ -177,7 +177,9 @@ the source FPS manually in the dialog.
 Select exactly one Camera and one classic Card2 or Axis, then choose
 **QTools > Experiment > Stabilize Card / Axis**. Choose the reference frame,
 **Stabilise** or **Match Move**, and whether the moving corners remain **Live**
-or are baked over the project frame range. QTools creates a single helper Group
+or are baked over the project frame range. For a Card, **FOV** builds the same
+camera-facing frame as Axis mode, centred on the Card, while **Card corners**
+uses the Card's actual vertices. QTools creates a single helper Group
 with Axis/Card and Camera inputs. Inside are four corner Axis nodes parented to
 the selected Axis/Card, four Reconcile3D projections, and a project-format
 Constant used only to establish pixel coordinates. Stabilise maps
@@ -188,7 +190,8 @@ image to the generated CornerPin2D.
 The helper Group can be reused after creation. Change **Reference frame** and
 click **Update** to reposition its corner Axes. The two create buttons make a
 new Stabilise or Match Move CornerPin and automatically apply the displayed
-reference frame first. **Link expression** chooses live expressions or baked
+reference frame first. **Create Match Card CornerPin** maps a normal full-frame
+image into the projected Card corners. **Link expression** chooses live expressions or baked
 animation for newly created CornerPins. **Apply expressions** converts every
 CornerPin currently linked to that Group into animation over the project frame
 range and removes the expressions.

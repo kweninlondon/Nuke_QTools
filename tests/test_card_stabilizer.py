@@ -79,8 +79,8 @@ class CardStabilizerTests(unittest.TestCase):
     def test_card_aspect_includes_pixel_aspect(self):
         image = _Node("Constant", format_value=_Format(2048, 1024, 2.0))
         corners = self.module._plane_corners(self._card(image=image))
-        self.assertEqual(corners[0], (-0.5, -0.125, 0.0))
-        self.assertEqual(corners[2], (0.5, 0.125, 0.0))
+        self.assertEqual(corners[0], (-2.0, -0.5, 0.0))
+        self.assertEqual(corners[2], (2.0, 0.5, 0.0))
 
     def test_square_card_ignores_image_format(self):
         image = _Node("Constant", format_value=_Format(2048, 1024, 2.0))
