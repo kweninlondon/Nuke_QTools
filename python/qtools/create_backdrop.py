@@ -1404,19 +1404,31 @@ class CreateBackdropDialog(QtWidgets.QDialog):
         self._update_graph_preview()
 
     def _accept(self):
-        settings = _settings()
-        settings.setValue("margin_factor", self.margin_field.value())
-        settings.setValue("align_edges", self.align_edges_checkbox.isChecked())
-        settings.setValue("text_size", self.text_size_combo.currentData())
-        settings.setValue("bold", self.bold_checkbox.isChecked())
-        title_layout = self.title_layout_combo.currentData()
-        settings.setValue("title_layout", title_layout)
-        settings.setValue("wrap_title", title_layout == "adaptive")
-        settings.setValue("appearance", self.appearance_combo.currentText())
-        settings.setValue("palette", self.palette_combo.currentText())
-        settings.setValue("auto_colour", self.auto_colour_checkbox.isChecked())
-        settings.setValue("colour_method", self.colour_method_combo.currentData())
-        settings.sync()
+        # Edit controls reflect the selected backdrop (for example, automatic
+        # colour is disabled so its exact stored colour can be retained).  They
+        # must not replace the user's defaults for the next backdrop creation.
+        if self._edit_backdrop is None:
+            settings = _settings()
+            settings.setValue("margin_factor", self.margin_field.value())
+            settings.setValue(
+                "align_edges", self.align_edges_checkbox.isChecked()
+            )
+            settings.setValue("text_size", self.text_size_combo.currentData())
+            settings.setValue("bold", self.bold_checkbox.isChecked())
+            title_layout = self.title_layout_combo.currentData()
+            settings.setValue("title_layout", title_layout)
+            settings.setValue("wrap_title", title_layout == "adaptive")
+            settings.setValue(
+                "appearance", self.appearance_combo.currentText()
+            )
+            settings.setValue("palette", self.palette_combo.currentText())
+            settings.setValue(
+                "auto_colour", self.auto_colour_checkbox.isChecked()
+            )
+            settings.setValue(
+                "colour_method", self.colour_method_combo.currentData()
+            )
+            settings.sync()
         self.accept()
 
     def values(self):
