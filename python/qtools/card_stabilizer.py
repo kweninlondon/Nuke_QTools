@@ -123,6 +123,48 @@ def _world_points_to_card_local(card, world_points, frame):
     return result
 
 
+def _card_oriented_fov_corners(card, camera, frame, orientation):
+    """Return a FOV-sized rectangle oriented in the Card's geometry plane."""
+    camera_corners = _axis_frustum_corners(card, camera, frame)
+
+    def distance(a, b):
+        return math.sqrt(sum((a[index] - b[index]) ** 2 for index in range(3)))
+
+    half_width = 0.5 * distance(camera_corners[0], camera_corners[1])
+    half_height = 0.5 * distance(camera_corners[0], camera_corners[3])
+    matrix = _matrix_at(card, "matrix", frame)
+    origin4 = matrix * nuke.math.Vector4(0.0, 0.0, 0.0, 1.0)
+    origin = (float(origin4.x), float(origin4.y), float(origin4.z))
+    local_bases = {
+        "XY": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        "YZ": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        "ZX": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+    }
+    if orientation not in local_bases:
+        raise ValueError("Unsupported Card orientation: {}".format(orientation))
+
+    world_bases = []
+    for local_basis in local_bases[orientation]:
+        vector = matrix * nuke.math.Vector4(
+            local_basis[0], local_basis[1], local_basis[2], 0.0
+        )
+        values = (float(vector.x), float(vector.y), float(vector.z))
+        length = math.sqrt(sum(value * value for value in values))
+        if length <= 1e-12:
+            raise ValueError("The selected Card has a singular transform.")
+        world_bases.append(tuple(value / length for value in values))
+
+    world_corners = []
+    for u_sign, v_sign in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        world_corners.append(tuple(
+            origin[component]
+            + u_sign * half_width * world_bases[0][component]
+            + v_sign * half_height * world_bases[1][component]
+            for component in range(3)
+        ))
+    return _world_points_to_card_local(card, world_corners, frame)
+
+
 def _axis_frustum_corners(axis, camera, reference_frame):
     """Return a reference-camera frustum plane through the Axis position."""
     projection_mode = _enum_name(camera, "projection_mode", "perspective")
@@ -226,19 +268,16 @@ def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card cor
     is_card = plane.Class() == "Card2"
     if is_card:
         _validate_card(plane)
+        orientation = _enum_name(plane, "orientation", "XY").upper()
         if card_mode == "FOV" and camera is not None and reference_frame is not None:
-            world_corners = _axis_frustum_corners(
-                plane, camera, reference_frame
-            )
-            return _world_points_to_card_local(
-                plane, world_corners, reference_frame
+            return _card_oriented_fov_corners(
+                plane, camera, reference_frame, orientation
             ), plane
         if card_mode not in CARD_GEOMETRY_MODES:
             raise ValueError("Unsupported Card mode: {}".format(card_mode))
         image = plane.input(0)
         use_image_aspect = bool(_knob_value(plane, "image_aspect", True))
         aspect = _format_aspect(image) if use_image_aspect else 1.0
-        orientation = _enum_name(plane, "orientation", "XY").upper()
     else:
         if camera is None or reference_frame is None:
             # Kept as a small pure fallback for unit testing.
@@ -489,10 +528,12 @@ def _create_reconcile_group(
                 )
     finally:
         group.end()
-    group.setInput(0, axis_input)
-    group.setInput(1, camera)
     if is_card:
         group.setInput(2, source_card)
+    group.setInput(1, camera)
+    # Connect this last: adding Card input 2 can otherwise make Nuke reshuffle
+    # the visible Group inputs before the Axis socket has been established.
+    group.setInput(0, axis_input)
     if (
         group.input(0) is not axis_input
         or group.input(1) is not camera
@@ -719,9 +760,10 @@ def create_stabilizer():
         axis_input = plane
         if source_card is not None:
             axis_input = _create_card_transform_axis(
-                source_card, plane.xpos(), top_y
+                source_card, start_x, top_y
             )
             created.append(axis_input)
+            top_y += 100
         projection_group = _create_reconcile_group(
             axis_input, camera, corners, reference_frame, start_x, top_y,
             card_mode, source_card
