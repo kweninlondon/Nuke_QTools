@@ -252,11 +252,11 @@ def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card cor
                 plane, world_corners, reference_frame
             ), plane
 
-    # Card2's image-aspect geometry is ``aspect x 1`` in local space.  Using
-    # ``1 x 1/aspect`` has the same ratio but not the same Card vertices, so
-    # child Axes end up incorrectly pulled in towards the Card centre.
-    half_width = 0.5 * aspect
-    half_height = 0.5
+    # Card2 keeps its local width normalized to one and adjusts its height for
+    # image aspect. The transform proxy supplies the Card's world transform;
+    # these values must therefore remain in the Card's own geometry space.
+    half_width = 0.5
+    half_height = 0.5 / aspect
     uv_corners = (
         (-half_width, -half_height),
         (half_width, -half_height),
@@ -342,13 +342,24 @@ def _drive_axis_from_card(axis, card):
             axis[knob_name].setValue(card[knob_name].value())
 
 
+def _create_card_transform_axis(card, x, y):
+    axis = nuke.nodes.Axis2(
+        name=_unique_name("Card_Transform"),
+        label="{} transform proxy\n(expression linked)".format(card.name()),
+    )
+    _drive_axis_from_card(axis, card)
+    _set_position(axis, x, y)
+    return axis
+
+
 def _create_reconcile_group(
-    axis_input, camera, corners, reference_frame, x, y, card_mode="Card corners"
+    axis_input, camera, corners, reference_frame, x, y,
+    card_mode="Card corners", source_card=None
 ):
     group = nuke.nodes.Group(
         name=_unique_name("CardStabilize_Projection"),
         label="4 corner projections\n{} + {}".format(
-            axis_input.name(), camera.name()
+            (source_card or axis_input).name(), camera.name()
         ),
     )
     group.addKnob(nuke.Tab_Knob("card_stabilizer", "Card Stabilizer"))
@@ -356,7 +367,7 @@ def _create_reconcile_group(
     reference_knob.setValue(reference_frame)
     reference_knob.setFlag(nuke.STARTLINE)
     group.addKnob(reference_knob)
-    is_card = axis_input.Class() == "Card2"
+    is_card = source_card is not None
     if is_card:
         card_mode_knob = nuke.Enumeration_Knob(
             "card_mode", "Card mode", list(CARD_GEOMETRY_MODES)
@@ -432,30 +443,24 @@ def _create_reconcile_group(
             (axis_node, 0), (camera_node, 1),
         ):
             input_node["number"].setValue(number)
+        if is_card:
+            card_node = nuke.nodes.Input(name="Card_Input", number=2)
+            card_node["number"].setValue(2)
         format_node = nuke.nodes.Constant(
             name="Projection_Format",
             label="project format for pixel coordinates",
         )
-        card_transform = None
-        if is_card:
-            card_transform = nuke.nodes.Axis2(
-                name="Card_Transform",
-                label="Card transform proxy\n(expression linked)",
-            )
-            _drive_axis_from_card(card_transform, axis_input)
-            card_transform.setXYpos(180, -20)
         for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners), 1):
             corner_axis = nuke.nodes.Axis2(
                 name="CornerAxis_{}".format(corner_name),
                 label="{} corner\ndriven by input Axis".format(corner_name),
             )
             # Axis2 scripting order in classic Nuke is parent axis=0, look=1.
-            corner_parent = card_transform if is_card else axis_node
-            corner_axis.setInput(0, corner_parent)
+            corner_axis.setInput(0, axis_node)
             for component, value in enumerate(point):
                 corner_axis["translate"].setValue(float(value), component)
             corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
-            if corner_axis.input(0) is not corner_parent:
+            if corner_axis.input(0) is not axis_node:
                 raise RuntimeError(
                     "Nuke did not parent {} to its transform Axis.".format(
                         corner_axis.name()
@@ -486,7 +491,13 @@ def _create_reconcile_group(
         group.end()
     group.setInput(0, axis_input)
     group.setInput(1, camera)
-    if group.input(0) is not axis_input or group.input(1) is not camera:
+    if is_card:
+        group.setInput(2, source_card)
+    if (
+        group.input(0) is not axis_input
+        or group.input(1) is not camera
+        or (is_card and group.input(2) is not source_card)
+    ):
         raise RuntimeError("Nuke did not preserve the Group's Axis/Camera input order.")
     return group
 
@@ -544,9 +555,11 @@ def _reference_points(group, reference_frame):
 def update_group(group):
     """Rebuild a helper Group's corner Axes at its displayed reference frame."""
     reference_frame = int(group["reference_frame"].value())
-    plane = group.input(0)
+    axis_input = group.input(0)
     camera = group.input(1)
-    if plane is None or camera is None:
+    is_card = group.knob("card_mode") is not None
+    plane = group.input(2) if is_card else axis_input
+    if plane is None or axis_input is None or camera is None:
         _message("The helper Group needs its Axis/Card and Camera inputs.")
         return False
     try:
@@ -562,11 +575,6 @@ def update_group(group):
         )
         group.begin()
         try:
-            if plane.Class() == "Card2":
-                card_transform = nuke.toNode("Card_Transform")
-                if card_transform is None:
-                    raise RuntimeError("The Card transform proxy is missing.")
-                _drive_axis_from_card(card_transform, plane)
             for corner_name, point in zip(CORNER_NAMES, corners):
                 corner_axis = nuke.toNode("CornerAxis_{}".format(corner_name))
                 if corner_axis is None:
@@ -591,7 +599,7 @@ def _project_format_corners():
 
 def create_from_group(group, match_move=False, match_card=False):
     """Update ``group`` and create a linked or baked CornerPin from it."""
-    plane = group.input(0)
+    plane = group.input(2) if group.knob("card_mode") is not None else group.input(0)
     card_mode = _enum_name(group, "card_mode", "Card corners")
     if match_card and (
         plane is None
@@ -707,8 +715,16 @@ def create_stabilizer():
     try:
         top_y = max(plane.ypos(), camera.ypos()) + 150
         start_x = min(plane.xpos(), camera.xpos())
+        source_card = plane if plane.Class() == "Card2" else None
+        axis_input = plane
+        if source_card is not None:
+            axis_input = _create_card_transform_axis(
+                source_card, plane.xpos(), top_y
+            )
+            created.append(axis_input)
         projection_group = _create_reconcile_group(
-            axis_input, camera, corners, reference_frame, start_x, top_y, card_mode
+            axis_input, camera, corners, reference_frame, start_x, top_y,
+            card_mode, source_card
         )
         projection_group["link_expression"].setValue(options["live"])
         created.append(projection_group)

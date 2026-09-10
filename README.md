@@ -177,7 +177,10 @@ the source FPS manually in the dialog.
 Select exactly one Camera and one classic Card2 or Axis, then choose
 **QTools > Experiment > Stabilize Card / Axis**. Choose the reference frame,
 **Stabilise** or **Match Move**, and whether the moving corners remain **Live**
-or are baked over the project frame range. For a Card, **FOV** builds the same
+or are baked over the project frame range. For a Card, QTools creates an
+expression-linked transform Axis outside the helper Group and connects it to
+the Group's Axis input; the Card remains connected as its geometry source.
+**FOV** builds the same
 camera-facing frame as Axis mode, centred on the Card, while **Card corners**
 uses the Card's actual vertices. QTools creates a single helper Group
 with Axis/Card and Camera inputs. Inside are four corner Axis nodes parented to
