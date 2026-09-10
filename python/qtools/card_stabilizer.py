@@ -102,6 +102,24 @@ def _matrix_at(node, knob_name, frame):
     return matrix
 
 
+def _card_world_position(card, frame):
+    """Return a Card2 origin using Nuke's 3D graph evaluation.
+
+    Unlike Axis nodes, Card2 does not expose a ``world_matrix`` knob.  A zeroed
+    child Axis does, and therefore provides the Card origin including parenting
+    and all transform-order choices without duplicating Nuke's matrix logic.
+    """
+    probe = nuke.nodes.Axis2(name=_unique_name("CardStabilize_CentreProbe"))
+    try:
+        probe.setInput(0, card)
+        if probe.input(0) is not card:
+            raise ValueError("Nuke could not connect the selected Card as a parent.")
+        probe["translate"].setValue((0.0, 0.0, 0.0))
+        return _world_position(probe, frame)
+    finally:
+        nuke.delete(probe)
+
+
 def _axis_frustum_corners(axis, camera, reference_frame):
     """Return a reference-camera frustum plane through the Axis position."""
     projection_mode = _enum_name(camera, "projection_mode", "perspective")
@@ -122,8 +140,13 @@ def _axis_frustum_corners(axis, camera, reference_frame):
             )
 
     camera_world = _matrix_at(camera, "matrix", reference_frame)
-    axis_world = _matrix_at(axis, "world_matrix", reference_frame)
-    axis_position = axis_world * nuke.math.Vector4(0.0, 0.0, 0.0, 1.0)
+    if axis.Class() == "Card2":
+        x, y, z = _card_world_position(axis, reference_frame)
+        axis_position = nuke.math.Vector4(x, y, z, 1.0)
+    else:
+        # Preserve the established Axis path exactly.
+        axis_world = _matrix_at(axis, "world_matrix", reference_frame)
+        axis_position = axis_world * nuke.math.Vector4(0.0, 0.0, 0.0, 1.0)
     camera_position = camera_world.inverse() * axis_position
     depth = -float(camera_position.z)
     if depth <= 0.0:
@@ -252,9 +275,15 @@ def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card cor
 def _options(plane):
     panel = nuke.Panel("Card / Axis Transform")
     panel.addSingleLineInput("Reference frame", str(nuke.frame()))
-    panel.addEnumerationPulldown("Mode", "Stabilise Match Move")
     if plane.Class() == "Card2":
         panel.addEnumerationPulldown("Card mode", "FOV {Card corners}")
+        panel.addEnumerationPulldown(
+            "Projection mode", "Stabilise {Match Move} {Match Card}"
+        )
+    else:
+        panel.addEnumerationPulldown(
+            "Projection mode", "Stabilise {Match Move}"
+        )
     panel.addBooleanCheckBox("Live transform", True)
     if not panel.show():
         return None
@@ -270,7 +299,7 @@ def _options(plane):
         raise ValueError("Reference frame must be a finite number.")
     return {
         "reference_frame": frame,
-        "mode": str(panel.value("Mode")),
+        "projection_mode": str(panel.value("Projection mode")),
         "card_mode": (
             str(panel.value("Card mode"))
             if plane.Class() == "Card2" else "Card corners"
@@ -345,8 +374,14 @@ def _create_reconcile_group(
             "from qtools import card_stabilizer; "
             "card_stabilizer.create_from_group(nuke.thisNode(), match_card=True)"
         )
+        match_card_knob.setEnabled(card_mode == "Card corners")
         match_card_knob.clearFlag(nuke.STARTLINE)
         group.addKnob(match_card_knob)
+        group["knobChanged"].setValue(
+            "if nuke.thisKnob().name() == 'card_mode':\n"
+            "    nuke.thisNode()['create_match_card'].setEnabled("
+            "nuke.thisNode()['card_mode'].value() == 'Card corners')"
+        )
     apply_knob = nuke.PyScript_Knob(
         "apply_expressions", "Apply expressions (bake linked CornerPins)"
     )
@@ -480,6 +515,9 @@ def update_group(group):
             _enum_name(group, "card_mode", "Card corners")
             if plane.Class() == "Card2" else "Card corners"
         )
+        match_card_knob = group.knob("create_match_card")
+        if match_card_knob is not None:
+            match_card_knob.setEnabled(card_mode == "Card corners")
         corners, _axis_input = _plane_corners(
             plane, camera, reference_frame, card_mode
         )
@@ -509,6 +547,15 @@ def _project_format_corners():
 
 def create_from_group(group, match_move=False, match_card=False):
     """Update ``group`` and create a linked or baked CornerPin from it."""
+    plane = group.input(0)
+    card_mode = _enum_name(group, "card_mode", "Card corners")
+    if match_card and (
+        plane is None
+        or plane.Class() != "Card2"
+        or card_mode != "Card corners"
+    ):
+        _message("Match Card is only available in Card mode: Card corners.")
+        return None
     if not update_group(group):
         return None
     reference_frame = int(group["reference_frame"].value())
@@ -595,6 +642,12 @@ def create_stabilizer():
     if options is None:
         return []
     reference_frame = options["reference_frame"]
+    if (
+        options["projection_mode"] == "Match Card"
+        and options["card_mode"] != "Card corners"
+    ):
+        _message("Match Card is only available in Card mode: Card corners.")
+        return []
     try:
         card_mode = options["card_mode"] if plane.Class() == "Card2" else "Card corners"
         corners, axis_input = _plane_corners(
@@ -615,8 +668,11 @@ def create_stabilizer():
         )
         projection_group["link_expression"].setValue(options["live"])
         created.append(projection_group)
+        projection_mode = options["projection_mode"]
         corner_pin = create_from_group(
-            projection_group, options["mode"] == "Match Move"
+            projection_group,
+            match_move=projection_mode == "Match Move",
+            match_card=projection_mode == "Match Card",
         )
         if corner_pin is None:
             raise RuntimeError("The initial CornerPin could not be created.")
