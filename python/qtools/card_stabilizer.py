@@ -103,21 +103,24 @@ def _matrix_at(node, knob_name, frame):
 
 
 def _card_world_position(card, frame):
-    """Return a Card2 origin using Nuke's 3D graph evaluation.
+    """Return a Card2 origin from its transform matrix.
 
-    Unlike Axis nodes, Card2 does not expose a ``world_matrix`` knob.  A zeroed
-    child Axis does, and therefore provides the Card origin including parenting
-    and all transform-order choices without duplicating Nuke's matrix logic.
+    Card2 exposes ``matrix`` rather than Axis' ``world_matrix`` and cannot be
+    connected as the parent input of a temporary Axis.
     """
-    probe = nuke.nodes.Axis2(name=_unique_name("CardStabilize_CentreProbe"))
-    try:
-        probe.setInput(0, card)
-        if probe.input(0) is not card:
-            raise ValueError("Nuke could not connect the selected Card as a parent.")
-        probe["translate"].setValue((0.0, 0.0, 0.0))
-        return _world_position(probe, frame)
-    finally:
-        nuke.delete(probe)
+    matrix = _matrix_at(card, "matrix", frame)
+    origin = matrix * nuke.math.Vector4(0.0, 0.0, 0.0, 1.0)
+    return (float(origin.x), float(origin.y), float(origin.z))
+
+
+def _world_points_to_card_local(card, world_points, frame):
+    """Transform world points into Card2-local coordinates."""
+    inverse = _matrix_at(card, "matrix", frame).inverse()
+    result = []
+    for x, y, z in world_points:
+        point = inverse * nuke.math.Vector4(x, y, z, 1.0)
+        result.append((float(point.x), float(point.y), float(point.z)))
+    return result
 
 
 def _axis_frustum_corners(axis, camera, reference_frame):
@@ -227,7 +230,7 @@ def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card cor
             world_corners = _axis_frustum_corners(
                 plane, camera, reference_frame
             )
-            return _world_points_to_parent_local(
+            return _world_points_to_card_local(
                 plane, world_corners, reference_frame
             ), plane
         if card_mode not in CARD_GEOMETRY_MODES:
@@ -310,6 +313,33 @@ def _options(plane):
 
 def _set_position(node, x, y):
     node.setXYpos(int(round(x)), int(round(y)))
+
+
+def _expression_node_path(node):
+    path = node.fullName()
+    return path if path.startswith("root.") else "root.{}".format(path)
+
+
+def _drive_axis_from_card(axis, card):
+    """Mirror a Card2 transform on an Axis without parenting it to geometry."""
+    source_path = _expression_node_path(card)
+    for knob_name in ("translate", "rotate", "scaling", "pivot", "skew"):
+        source = card.knob(knob_name)
+        target = axis.knob(knob_name)
+        if source is None or target is None:
+            continue
+        suffixes = ("x", "y", "z", "w")
+        for component in range(min(source.arraySize(), target.arraySize())):
+            target.setExpression(
+                "{}.{}.{}".format(source_path, knob_name, suffixes[component]),
+                component,
+            )
+    for knob_name in ("uniform_scale",):
+        if card.knob(knob_name) is not None and axis.knob(knob_name) is not None:
+            axis[knob_name].setExpression("{}.{}".format(source_path, knob_name))
+    for knob_name in ("transform_order", "rot_order"):
+        if card.knob(knob_name) is not None and axis.knob(knob_name) is not None:
+            axis[knob_name].setValue(card[knob_name].value())
 
 
 def _create_reconcile_group(
@@ -406,19 +436,28 @@ def _create_reconcile_group(
             name="Projection_Format",
             label="project format for pixel coordinates",
         )
+        card_transform = None
+        if is_card:
+            card_transform = nuke.nodes.Axis2(
+                name="Card_Transform",
+                label="Card transform proxy\n(expression linked)",
+            )
+            _drive_axis_from_card(card_transform, axis_input)
+            card_transform.setXYpos(180, -20)
         for index, (corner_name, point) in enumerate(zip(CORNER_NAMES, corners), 1):
             corner_axis = nuke.nodes.Axis2(
                 name="CornerAxis_{}".format(corner_name),
                 label="{} corner\ndriven by input Axis".format(corner_name),
             )
             # Axis2 scripting order in classic Nuke is parent axis=0, look=1.
-            corner_axis.setInput(0, axis_node)
+            corner_parent = card_transform if is_card else axis_node
+            corner_axis.setInput(0, corner_parent)
             for component, value in enumerate(point):
                 corner_axis["translate"].setValue(float(value), component)
             corner_axis.setXYpos((index - 1) * HORIZONTAL_SPACING, 60)
-            if corner_axis.input(0) is not axis_node:
+            if corner_axis.input(0) is not corner_parent:
                 raise RuntimeError(
-                    "Nuke did not parent {} to the Axis input.".format(
+                    "Nuke did not parent {} to its transform Axis.".format(
                         corner_axis.name()
                     )
                 )
@@ -523,6 +562,11 @@ def update_group(group):
         )
         group.begin()
         try:
+            if plane.Class() == "Card2":
+                card_transform = nuke.toNode("Card_Transform")
+                if card_transform is None:
+                    raise RuntimeError("The Card transform proxy is missing.")
+                _drive_axis_from_card(card_transform, plane)
             for corner_name, point in zip(CORNER_NAMES, corners):
                 corner_axis = nuke.toNode("CornerAxis_{}".format(corner_name))
                 if corner_axis is None:
