@@ -172,6 +172,17 @@ speed. The output start frame defaults to the Read node's first frame and can
 be changed in the dialog. If a movie does not expose usable FPS metadata, enter
 the source FPS manually in the dialog.
 
+## Apply TimeWarp to Camera
+
+Select exactly one Camera and one TimeWarp, then choose **QTools > Utilities >
+Apply TimeWarp to Camera**. Each keyed TimeWarp lookup pair is interpreted as
+`output frame <- source frame`. Camera keys found on those source frames are
+copied to their corresponding output frames; every other animation key on the
+Camera is removed. The confirmation dialog previews the mapping and the entire
+operation can be reverted with one Undo.
+
+Expression-driven Camera channels are rejected rather than silently baked.
+
 ## Stabilize Card / Axis
 
 Select exactly one Camera and one classic Card2 or Axis, then choose

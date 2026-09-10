@@ -128,6 +128,11 @@ utilities_menu.addCommand(
 )
 
 utilities_menu.addCommand(
+    "Apply TimeWarp to Camera",
+    "from qtools import camera_timewarp; camera_timewarp.apply_selected()",
+)
+
+utilities_menu.addCommand(
     "Node Alignment",
     "from qtools import node_alignment; node_alignment.show_panel()",
     "Ctrl+Alt+A",

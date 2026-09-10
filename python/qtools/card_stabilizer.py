@@ -123,48 +123,6 @@ def _world_points_to_card_local(card, world_points, frame):
     return result
 
 
-def _card_oriented_fov_corners(card, camera, frame, orientation):
-    """Return a FOV-sized rectangle oriented in the Card's geometry plane."""
-    camera_corners = _axis_frustum_corners(card, camera, frame)
-
-    def distance(a, b):
-        return math.sqrt(sum((a[index] - b[index]) ** 2 for index in range(3)))
-
-    half_width = 0.5 * distance(camera_corners[0], camera_corners[1])
-    half_height = 0.5 * distance(camera_corners[0], camera_corners[3])
-    matrix = _matrix_at(card, "matrix", frame)
-    origin4 = matrix * nuke.math.Vector4(0.0, 0.0, 0.0, 1.0)
-    origin = (float(origin4.x), float(origin4.y), float(origin4.z))
-    local_bases = {
-        "XY": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-        "YZ": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-        "ZX": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
-    }
-    if orientation not in local_bases:
-        raise ValueError("Unsupported Card orientation: {}".format(orientation))
-
-    world_bases = []
-    for local_basis in local_bases[orientation]:
-        vector = matrix * nuke.math.Vector4(
-            local_basis[0], local_basis[1], local_basis[2], 0.0
-        )
-        values = (float(vector.x), float(vector.y), float(vector.z))
-        length = math.sqrt(sum(value * value for value in values))
-        if length <= 1e-12:
-            raise ValueError("The selected Card has a singular transform.")
-        world_bases.append(tuple(value / length for value in values))
-
-    world_corners = []
-    for u_sign, v_sign in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-        world_corners.append(tuple(
-            origin[component]
-            + u_sign * half_width * world_bases[0][component]
-            + v_sign * half_height * world_bases[1][component]
-            for component in range(3)
-        ))
-    return _world_points_to_card_local(card, world_corners, frame)
-
-
 def _axis_frustum_corners(axis, camera, reference_frame):
     """Return a reference-camera frustum plane through the Axis position."""
     projection_mode = _enum_name(camera, "projection_mode", "perspective")
@@ -270,8 +228,15 @@ def _plane_corners(plane, camera=None, reference_frame=None, card_mode="Card cor
         _validate_card(plane)
         orientation = _enum_name(plane, "orientation", "XY").upper()
         if card_mode == "FOV" and camera is not None and reference_frame is not None:
-            return _card_oriented_fov_corners(
-                plane, camera, reference_frame, orientation
+            # Build a camera-facing frustum plane, then store it in Card-local
+            # space. Reapplying the live proxy transform makes the reference
+            # projection exactly full-frame while subsequent Card rotation and
+            # motion remain active relative to that reference.
+            world_corners = _axis_frustum_corners(
+                plane, camera, reference_frame
+            )
+            return _world_points_to_card_local(
+                plane, world_corners, reference_frame
             ), plane
         if card_mode not in CARD_GEOMETRY_MODES:
             raise ValueError("Unsupported Card mode: {}".format(card_mode))
@@ -560,21 +525,35 @@ def _reconcile_node(group, corner_index):
     return node
 
 
-def _set_live_corner(corner_pin, knob_name, group, corner_index):
+def _set_live_corner(
+    corner_pin, knob_name, group, corner_index,
+    reference_frame=None, reference_value=None
+):
     reconcile_path = _reconcile_path(group, corner_index)
     for component, suffix in enumerate(("x", "y")):
-        corner_pin[knob_name].setExpression(
-            "{}.output.{}".format(reconcile_path, suffix), component
-        )
+        expression = "{}.output.{}".format(reconcile_path, suffix)
+        if reference_frame is not None and reference_value is not None:
+            expression = "frame == {} ? {} : {}".format(
+                reference_frame, float(reference_value[component]), expression
+            )
+        corner_pin[knob_name].setExpression(expression, component)
 
 
-def _set_baked_corner(corner_pin, knob_name, group, corner_index):
+def _set_baked_corner(
+    corner_pin, knob_name, group, corner_index,
+    reference_frame=None, reference_value=None
+):
     knob = corner_pin[knob_name]
     source = _reconcile_node(group, corner_index)["output"]
     for component in range(2):
         knob.setAnimated(component)
         for frame in range(int(nuke.root().firstFrame()), int(nuke.root().lastFrame()) + 1):
-            knob.setValueAt(source.getValueAt(frame, component), frame, component)
+            value = (
+                reference_value[component]
+                if frame == reference_frame and reference_value is not None
+                else source.getValueAt(frame, component)
+            )
+            knob.setValueAt(value, frame, component)
 
 
 def _reference_points(group, reference_frame):
@@ -669,12 +648,25 @@ def create_from_group(group, match_move=False, match_card=False):
     corner_pin["invert"].setValue(bool(match_move))
     _set_position(corner_pin, group.xpos(), group.ypos() + 170)
     format_corners = _project_format_corners() if match_card else None
+    card_fov = (
+        plane is not None
+        and plane.Class() == "Card2"
+        and card_mode == "FOV"
+    )
+    fov_corners = _project_format_corners() if card_fov else None
     for index in range(1, 5):
         animated_knob = "to{}".format(index) if match_card else "from{}".format(index)
+        reference_value = fov_corners[index - 1] if card_fov else None
         if linked:
-            _set_live_corner(corner_pin, animated_knob, group, index)
+            _set_live_corner(
+                corner_pin, animated_knob, group, index,
+                reference_frame if card_fov else None, reference_value
+            )
         else:
-            _set_baked_corner(corner_pin, animated_knob, group, index)
+            _set_baked_corner(
+                corner_pin, animated_knob, group, index,
+                reference_frame if card_fov else None, reference_value
+            )
         if match_card:
             for component, value in enumerate(format_corners[index - 1]):
                 corner_pin["from{}".format(index)].setValue(value, component)
@@ -682,8 +674,12 @@ def create_from_group(group, match_move=False, match_card=False):
             for component in range(2):
                 # Sample the finished source knob itself so the reference frame is
                 # guaranteed to be an identity even after expression resolution.
-                value = corner_pin["from{}".format(index)].getValueAt(
-                    reference_frame, component
+                value = (
+                    reference_value[component]
+                    if reference_value is not None
+                    else corner_pin["from{}".format(index)].getValueAt(
+                        reference_frame, component
+                    )
                 )
                 corner_pin["to{}".format(index)].setValue(float(value), component)
     return corner_pin
