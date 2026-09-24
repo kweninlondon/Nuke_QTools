@@ -5,12 +5,14 @@ import json
 import os
 import re
 import tempfile
+import traceback
 
 import nuke
 
 from qtools import cg_to_film
 
 _dialog = None
+_registered_menus = None
 
 
 def _qt():
@@ -129,15 +131,35 @@ def import_group(path):
             os.unlink(temporary)
 
 
-def register_menus():
-    reload_menus()
+def register_menus(groups=None, toolbar=None):
+    """Use the actual menus returned at startup; contain library failures."""
+    global _registered_menus
+    if groups is not None and toolbar is not None:
+        _registered_menus = (groups, toolbar)
+    try:
+        reload_menus()
+    except Exception:
+        nuke.tprint("QTools group library failed to load:\n" + traceback.format_exc())
+        # Leave settings reachable so invalid paths can be corrected, and let
+        # the remaining QTools startup commands continue registering.
+        if groups is not None:
+            try:
+                groups.clearMenu()
+                groups.addCommand("Group Settings…", show_settings)
+            except Exception:
+                nuke.tprint("QTools group settings could not be registered:\n" +
+                            traceback.format_exc())
 
 
 def _live_menus():
     """Resolve current Nuke menu objects, including after Python module reloads."""
-    main = nuke.menu("Nuke").findItem("QTools")
-    groups = main.findItem("Groups")
-    toolbar = nuke.menu("Nodes").findItem("QTools")
+    if _registered_menus is not None:
+        return _registered_menus
+    # findItem returns a MenuItem wrapper in Nuke 16, even for submenus.
+    # Menu.menu returns the Menu object with clearMenu/addCommand methods.
+    main = nuke.menu("Nuke").menu("QTools")
+    groups = main.menu("Groups")
+    toolbar = nuke.menu("Nodes").menu("QTools")
     return groups, toolbar
 
 

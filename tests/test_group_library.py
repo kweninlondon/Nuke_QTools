@@ -99,12 +99,44 @@ class GroupLibraryTests(unittest.TestCase):
         settings.sync.assert_called_once()
 
     def test_resolves_live_menus_without_registration_state(self):
+        groups = mock.Mock(spec=['clearMenu', 'addCommand', 'addSeparator', 'addMenu'])
+        toolbar = mock.Mock(spec=['clearMenu', 'addCommand', 'addSeparator', 'addMenu'])
+        main = mock.Mock(spec=['menu'])
+        main.menu.return_value = groups
+        menu_bar = mock.Mock(spec=['menu'])
+        menu_bar.menu.return_value = main
+        nodes = mock.Mock(spec=['menu'])
+        nodes.menu.return_value = toolbar
         nuke = mock.Mock()
-        with mock.patch.object(self.library, 'nuke', nuke):
-            main, toolbar = self.library._live_menus()
-        self.assertIs(main, nuke.menu.return_value.findItem.return_value.findItem.return_value)
-        self.assertIs(toolbar, nuke.menu.return_value.findItem.return_value)
-        self.assertEqual(nuke.menu.call_args_list, [mock.call('Nuke'), mock.call('Nodes')])
+        nuke.menu.side_effect = lambda name: {'Nuke': menu_bar, 'Nodes': nodes}[name]
+        with mock.patch.object(self.library, 'nuke', nuke), mock.patch.object(
+                self.library, '_registered_menus', None), mock.patch.object(
+                self.library, 'preferences', return_value=([], False)):
+            self.assertEqual(self.library._live_menus(), (groups, toolbar))
+            self.library.reload_menus(scan=([], []))
+        groups.clearMenu.assert_called_once()
+        toolbar.clearMenu.assert_called_once()
+        menu_bar.menu.assert_called_with('QTools')
+        main.menu.assert_called_with('Groups')
+        nodes.menu.assert_called_with('QTools')
+
+    def test_startup_uses_supplied_menu_objects(self):
+        menus = (mock.Mock(), mock.Mock())
+        with mock.patch.object(self.library, '_registered_menus', None), mock.patch.object(
+                self.library, 'reload_menus') as reload:
+            self.library.register_menus(*menus)
+            self.assertEqual(self.library._live_menus(), menus)
+            reload.assert_called_once()
+
+    def test_library_startup_failure_keeps_settings_available(self):
+        groups, toolbar = mock.Mock(), mock.Mock()
+        nuke = mock.Mock()
+        with mock.patch.object(self.library, '_registered_menus', None), mock.patch.object(
+                self.library, 'nuke', nuke), mock.patch.object(
+                self.library, 'reload_menus', side_effect=RuntimeError('scan failed')):
+            self.library.register_menus(groups, toolbar)
+        groups.addCommand.assert_called_once_with('Group Settings…', self.library.show_settings)
+        self.assertIn('scan failed', nuke.tprint.call_args.args[0])
 
     def test_disabled_filter_pastes_original(self):
         nuke = mock.Mock()
