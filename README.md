@@ -165,7 +165,7 @@ original QTools asset to reopen CG To Film correctly.
 
 ## Group libraries
 
-Open **QTools > Group Settings…** to add multiple folders using **Add folder…**
+Open **QTools > Groups > Group Settings…** to add multiple folders using **Add folder…**
 or **Add path…** (also accepts environment variables and `~`). Click
 **Save and reload list** to save your preferences and refresh both
 **QTools > Groups** and the **Q-icon QTools toolbar** immediately. Use the same

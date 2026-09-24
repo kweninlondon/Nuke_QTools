@@ -140,11 +140,14 @@ def reload_menus():
     paths, _ = preferences()
     libraries, warnings = discover(paths)
     count = sum(len(files) for _, files in libraries)
-    for menu in _menus:
+    for index, menu in enumerate(_menus):
         menu.clearMenu()
+        if index == 0:
+            menu.addCommand("Group Settings…", show_settings)
+            menu.addSeparator()
         menu.addCommand("CG To Film", functools.partial(import_group, cg_to_film._GROUP_PATH),
                         icon="qtools.svg")
-        used = {"CG To Film"}
+        used = {"CG To Film", "Group Settings…"}
         for root, files in libraries:
             label = os.path.basename(root) or root
             base, index = label, 2
