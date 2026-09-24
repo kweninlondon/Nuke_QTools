@@ -10,7 +10,6 @@ import nuke
 
 from qtools import cg_to_film
 
-_menus = ()
 _dialog = None
 
 
@@ -130,23 +129,41 @@ def import_group(path):
             os.unlink(temporary)
 
 
-def register_menus(*menus):
-    global _menus
-    _menus = menus
+def register_menus():
     reload_menus()
 
 
-def reload_menus():
+def _live_menus():
+    """Resolve current Nuke menu objects, including after Python module reloads."""
+    main = nuke.menu("Nuke").findItem("QTools")
+    groups = main.findItem("Groups")
+    toolbar = nuke.menu("Nodes").findItem("QTools")
+    return groups, toolbar
+
+
+def save_preferences(paths, delete_viewers):
+    core, _ = _qt()
+    settings = _settings()
+    settings.setValue("library_v1", json.dumps({
+        "paths": paths, "delete_viewers": delete_viewers,
+    }))
+    settings.sync()
+    # PySide6 enums belong to their type, not the QSettings instance. An
+    # instance lookup can raise after saving and prevent the menus refreshing.
+    if settings.status() != core.QSettings.Status.NoError:
+        raise OSError("Could not save group settings. Check your user preferences permissions.")
+
+
+def reload_menus(scan=None):
     paths, _ = preferences()
-    libraries, warnings = discover(paths)
+    libraries, warnings = discover(paths) if scan is None else scan
     count = sum(len(files) for _, files in libraries)
-    for index, menu in enumerate(_menus):
+    for index, menu in enumerate(_live_menus()):
         menu.clearMenu()
         if index == 0:
             menu.addCommand("Group Settings…", show_settings)
             menu.addSeparator()
-        menu.addCommand("CG To Film", functools.partial(import_group, cg_to_film._GROUP_PATH),
-                        icon="qtools.svg")
+        menu.addCommand("CG To Film", functools.partial(import_group, cg_to_film._GROUP_PATH))
         used = {"CG To Film", "Group Settings…"}
         for root, files in libraries:
             label = os.path.basename(root) or root
@@ -155,7 +172,7 @@ def reload_menus():
                 label = "{} ({})".format(base, index)
                 index += 1
             used.add(label)
-            library_menu = menu.addMenu(label, icon="qtools.svg")
+            library_menu = menu.addMenu(label)
             submenus = {(): library_menu}
             for relative in files:
                 parts = relative.split(os.sep)
@@ -168,8 +185,7 @@ def reload_menus():
                     title += " (.nk)"
                 submenus[tuple(parts[:-1])].addCommand(
                     title,
-                    functools.partial(import_group, os.path.join(root, relative)),
-                    icon="qtools.svg")
+                    functools.partial(import_group, os.path.join(root, relative)))
     for warning in warnings:
         nuke.tprint("QTools Groups: " + warning)
     return count, warnings
@@ -177,7 +193,8 @@ def reload_menus():
 
 def show_settings():
     global _dialog
-    _, widgets = _qt()
+    core, widgets = _qt()
+    path_role = core.Qt.ItemDataRole.UserRole
     if _dialog is not None and _dialog.isVisible():
         _dialog.raise_()
         _dialog.activateWindow()
@@ -192,7 +209,9 @@ def show_settings():
             layout.addWidget(widgets.QLabel("Group folders (.nk files; subfolders become submenus):"))
             self.paths = widgets.QListWidget()
             paths, remove = preferences()
-            self.paths.addItems(paths)
+            self.last_reload = None
+            for path in paths:
+                self.append_path(path)
             layout.addWidget(self.paths)
             row = widgets.QHBoxLayout()
             layout.addLayout(row)
@@ -206,22 +225,31 @@ def show_settings():
             self.remove.setChecked(remove)
             self.remove.setToolTip("Remove Viewers from imported files, including inside Groups, before pasting.")
             layout.addWidget(self.remove)
-            self.status = widgets.QLabel("Changes are saved when you click Save and reload list.")
+            self.status = widgets.QLabel("Closing saves settings. Cancel discards changes since the last reload.")
             self.status.setWordWrap(True)
             layout.addWidget(self.status)
-            save = widgets.QPushButton("Save and reload list")
-            save.clicked.connect(self.save)
-            layout.addWidget(save)
-            close = widgets.QPushButton("Close")
-            close.clicked.connect(self.close)
-            layout.addWidget(close)
+            buttons = widgets.QHBoxLayout()
+            layout.addLayout(buttons)
+            reload_button = widgets.QPushButton("Reload list")
+            reload_button.clicked.connect(self.reload)
+            buttons.addWidget(reload_button)
+            cancel = widgets.QPushButton("Cancel")
+            cancel.clicked.connect(self.reject)
+            buttons.addWidget(cancel)
+
+        def current_paths(self):
+            return [self.paths.item(i).data(path_role) for i in range(self.paths.count())]
+
+        def snapshot(self):
+            return self.current_paths(), self.remove.isChecked()
 
         def append_path(self, path):
             if path.strip():
                 path = normalize_path(path.strip())
-                existing = [self.paths.item(i).text() for i in range(self.paths.count())]
-                if path not in existing:
-                    self.paths.addItem(path)
+                if path not in self.current_paths():
+                    item = widgets.QListWidgetItem(path)
+                    item.setData(path_role, path)
+                    self.paths.addItem(item)
 
         def add_folder(self):
             self.append_path(widgets.QFileDialog.getExistingDirectory(self, "Choose group folder"))
@@ -236,18 +264,51 @@ def show_settings():
                 self.paths.takeItem(self.paths.row(item))
 
         def save(self):
-            settings = _settings()
-            settings.setValue("library_v1", json.dumps({
-                "paths": [self.paths.item(i).text() for i in range(self.paths.count())],
-                "delete_viewers": self.remove.isChecked(),
-            }))
-            settings.sync()
-            if settings.status() != settings.NoError:
-                self.status.setText("Could not save group settings. Check your user preferences permissions.")
-                return
-            count, warnings = reload_menus()
+            try:
+                save_preferences(*self.snapshot())
+                return True
+            except Exception as error:
+                self.status.setText("Save failed: {}".format(error))
+                return False
+
+        def reload(self):
+            if not self.save():
+                return False
+            try:
+                scan = discover(self.current_paths())
+                count, warnings = reload_menus(scan=scan)
+                counts = {os.path.normcase(os.path.realpath(root)): len(files)
+                          for root, files in scan[0]}
+                for i in range(self.paths.count()):
+                    item = self.paths.item(i)
+                    path = item.data(path_role)
+                    loaded = counts.get(os.path.normcase(os.path.realpath(path)))
+                    suffix = ("{} nodes loaded".format(loaded) if loaded is not None
+                              else "0 nodes loaded; unavailable")
+                    item.setText("{} ({})".format(path, suffix))
+                self.last_reload = self.snapshot()
+            except Exception as error:
+                self.status.setText("Reload failed: {}".format(error))
+                return False
             self.status.setText("Loaded {} group files.{}".format(
                 count, "\n" + "\n".join(warnings) if warnings else ""))
+            return True
+
+        def closeEvent(self, event):
+            if not self.save():
+                event.ignore()
+                return
+            if self.last_reload != self.snapshot():
+                answer = widgets.QMessageBox.question(
+                    self, "Reload group list?",
+                    "Settings saved. Reload the group menus now?",
+                    widgets.QMessageBox.Yes | widgets.QMessageBox.No,
+                    widgets.QMessageBox.Yes,
+                )
+                if answer == widgets.QMessageBox.Yes and not self.reload():
+                    event.ignore()
+                    return
+            event.accept()
 
     _dialog = SettingsDialog()
     _dialog.show()

@@ -10,7 +10,7 @@ nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools", "qtools.svg")
 
 from qtools import group_library
 
-group_library.register_menus(groups_menu, nodes_qtools_menu)
+group_library.register_menus()
 
 from qtools import shot_notes
 from qtools import node_alignment

@@ -75,7 +75,7 @@ class GroupLibraryTests(unittest.TestCase):
         menus = [mock.Mock(), mock.Mock()]
         libraries = [('/one/Library', ['Nested/A.nk', 'B.nk']),
                      ('/two/Library', ['C.nk'])]
-        with mock.patch.object(self.library, '_menus', menus), mock.patch.object(
+        with mock.patch.object(self.library, '_live_menus', return_value=menus), mock.patch.object(
                 self.library, 'preferences', return_value=([], False)), mock.patch.object(
                 self.library, 'discover', return_value=(libraries, [])):
             self.assertEqual(self.library.reload_menus(), (3, []))
@@ -87,6 +87,24 @@ class GroupLibraryTests(unittest.TestCase):
             nested = menu.addMenu.return_value.addMenu.return_value
             callback = nested.addCommand.call_args.args[1]
             self.assertEqual(callback.args, ('/one/Library/Nested/A.nk',))
+
+    def test_save_supports_scoped_qt_enums(self):
+        core = types.SimpleNamespace(QSettings=types.SimpleNamespace(
+            Status=types.SimpleNamespace(NoError=0)))
+        settings = mock.Mock(spec=['setValue', 'sync', 'status'])
+        settings.status.return_value = 0
+        with mock.patch.object(self.library, '_qt', return_value=(core, None)), mock.patch.object(
+                self.library, '_settings', return_value=settings):
+            self.library.save_preferences(['/groups'], True)
+        settings.sync.assert_called_once()
+
+    def test_resolves_live_menus_without_registration_state(self):
+        nuke = mock.Mock()
+        with mock.patch.object(self.library, 'nuke', nuke):
+            main, toolbar = self.library._live_menus()
+        self.assertIs(main, nuke.menu.return_value.findItem.return_value.findItem.return_value)
+        self.assertIs(toolbar, nuke.menu.return_value.findItem.return_value)
+        self.assertEqual(nuke.menu.call_args_list, [mock.call('Nuke'), mock.call('Nodes')])
 
     def test_disabled_filter_pastes_original(self):
         nuke = mock.Mock()

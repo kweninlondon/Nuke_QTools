@@ -167,9 +167,13 @@ original QTools asset to reopen CG To Film correctly.
 
 Open **QTools > Groups > Group Settings…** to add multiple folders using **Add folder…**
 or **Add path…** (also accepts environment variables and `~`). Click
-**Save and reload list** to save your preferences and refresh both
+**Reload list** to save your preferences and refresh both
 **QTools > Groups** and the **Q-icon QTools toolbar** immediately. Use the same
-button after adding, moving, or removing files on disk.
+button after adding, moving, or removing files on disk. Each path then shows
+**(N nodes loaded)**, counting importable `.nk` files including subfolders.
+Closing the window saves settings and offers to reload if you have not reloaded
+the current settings. **Cancel** (or Escape) discards changes since the last
+reload without saving.
 
 Each configured folder has its own submenu; subfolders become nested submenus
 and `.nk` files become import commands. Files are pasted into the current node
