@@ -163,6 +163,25 @@ The command pastes a Group node whose complete internal node graph is stored
 in the current Nuke script. Scripts created this way do not require the
 original QTools asset to reopen CG To Film correctly.
 
+## Group libraries
+
+Open **QTools > Group Settings…** to add multiple folders using **Add folder…**
+or **Add path…** (also accepts environment variables and `~`). Click
+**Save and reload list** to save your preferences and refresh both
+**QTools > Groups** and the **Q-icon QTools toolbar** immediately. Use the same
+button after adding, moving, or removing files on disk.
+
+Each configured folder has its own submenu; subfolders become nested submenus
+and `.nk` files become import commands. Files are pasted into the current node
+graph. CG To Film remains available. Unavailable folders are reported in the
+settings window without blocking other libraries. Settings persist per user
+across Nuke restarts.
+
+Enable **delete viewers** to strip Viewer nodes, including those inside Groups,
+from a temporary copy **before** Nuke imports it. Original library files and
+Viewers already in your scene are untouched. This option also applies to the
+bundled CG To Film menu command and defaults to off.
+
 ## QuickTime FPS Conform
 
 Select one movie Read node and choose **QTools > Utilities > Conform QuickTime

@@ -6,17 +6,12 @@ qtools_menu = nuke.menu("Nuke").addMenu("QTools")
 
 groups_menu = qtools_menu.addMenu("Groups")
 
-groups_menu.addCommand(
-    "CG To Film",
-    "from qtools import cg_to_film; cg_to_film.create_group()",
-)
-
 nodes_qtools_menu = nuke.menu("Nodes").addMenu("QTools", "qtools.svg")
 
-nodes_qtools_menu.addCommand(
-    "CG To Film",
-    "from qtools import cg_to_film; cg_to_film.create_group()",
-)
+from qtools import group_library
+
+group_library.register_menus(groups_menu, nodes_qtools_menu)
+qtools_menu.addCommand("Group Settings…", group_library.show_settings)
 
 from qtools import shot_notes
 from qtools import node_alignment
