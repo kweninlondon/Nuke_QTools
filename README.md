@@ -186,6 +186,70 @@ from a temporary copy **before** Nuke imports it. Original library files and
 Viewers already in your scene are untouched. This option also applies to the
 bundled CG To Film menu command and defaults to off.
 
+## Channel Rules (Keep / Remove)
+
+Select a source and choose **QTools > Utilities > Channel Rules (Keep / Remove)**.
+This creates a self-contained **Group** with two text fields and an Apply/Update
+button. With no source selected, connect the Group input before applying.
+
+- **Remove**: comma-separated patterns for unwanted layers or individual channels.
+  `*beauty` removes all channels in layers ending in `beauty`.
+- **Keep**: when nonempty, only matching layers/channels are retained. Evaluated
+  against the original input, so it overrides Remove. For example, Remove `*`
+  and Keep `*_ENV*` retain the layers containing `_ENV`.
+- Patterns are case-sensitive shell wildcards (`*`, `?`, `[abc]`), not regular
+  expressions. `rgba.red` matches an individual channel; `rgba` matches its
+  entire layer. Surrounding spaces and empty comma-separated entries are ignored.
+- Blank Keep retains everything not matched by Remove. Both fields blank pass
+  everything through. A nonempty Keep with no matches removes everything.
+
+**Apply** starts with orange text. After a successful apply it becomes **Update**
+in the normal colour. Editing either rule or reconnecting the input turns it
+orange again; clicking updates the graph and the read-only **Channels Removed**
+list. Until applied, the Group is a pass-through Input → Output.
+
+Internally the tool computes the unwanted channels and creates only native
+**Remove** nodes in remove mode, with up to four masks per node. Entire unwanted
+layers use one mask; partially removed layers use individual channel masks.
+For example, keeping six of 25 complete AOV layers requires five Remove nodes
+for the other 19 layers (plus another mask if `rgba` is also unwanted). They are
+all contained in one Group. Each update stages and checks the new chain before
+replacing the previous one, and removes obsolete generated nodes. No Copy,
+Merge, gizmo, or compiled plugin is used.
+
+The Group embeds its update code and saves its native processing graph directly
+in the script. **QTools is not required to reopen, render, or update an existing
+Group on another machine.** Rendering evaluates the native graph; the Python
+button only rebuilds it when clicked. Rules are resolved against the channels
+present at that moment, rather than evaluated dynamically while rendering.
+Click Update after upstream channel changes: newly arriving channels otherwise
+pass through the baked removal chain, even if a Keep pattern would exclude them.
+Avoid changing the generated nodes manually because Update replaces them.
+
+### RemovePlus distribution review
+
+Reviewed 3 October 2026: [RemovePlus on Nukepedia](https://www.nukepedia.com/tools/plugins/channel/removeplus/),
+by Emanuele Comotti, links to [chou0528/RemovePlus](https://github.com/chou0528/RemovePlus).
+At upstream commit `54a16673a3bff01f89f984ae282720eaa3751e1b`, the repository
+contains compiled binaries and a short README, with **no licence file or source
+code**. Redistribution permission could not be established, so no upstream
+code or binaries are included in QTools.
+
+Although the listing advertises Nuke 14–17 across platforms, the actual inventory
+has Linux builds for 14.0, 14.1, 15.0, 15.1, 15.2, 16.0 and 17.0; Windows builds
+for 14.0–15.2 only; and Mac builds for 15.0–16.1 only. In particular, it contains
+no Windows Nuke 16 build or Mac Nuke 17 build. Binary architecture and ABI
+compatibility were not verified. This repository documents Mac and Windows
+installation but does not declare a supported Nuke version matrix.
+
+The QTools Group is an original implementation. Unit tests cover wildcard
+rules, keep precedence, mask batching, and failed-update recovery.
+`tests/nuke/multi_layer_remove_smoke.py` checks native channel output, script
+reopening, and embedded updates after removing QTools from Python's import path.
+Run it in a fresh licensed Nuke session with `Nuke -t <path-to-test>`.
+Local native validation was blocked by the absence of a Nuke render licence;
+the button appearance and actual Nuke evaluation still require that check.
+
 ## QuickTime FPS Conform
 
 Select one movie Read node and choose **QTools > Utilities > Conform QuickTime

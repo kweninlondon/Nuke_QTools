@@ -100,6 +100,11 @@ teleport_menu.addCommand(
 utilities_menu = qtools_menu.addMenu("Utilities")
 
 utilities_menu.addCommand(
+    "Channel Rules (Keep / Remove)",
+    "from qtools import multi_layer_remove; multi_layer_remove.create_group()",
+)
+
+utilities_menu.addCommand(
     "Create AYON Writes",
     "from qtools import ayon_write_creator; "
     "ayon_write_creator.create_ayon_writes()",
