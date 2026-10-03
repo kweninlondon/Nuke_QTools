@@ -100,7 +100,7 @@ teleport_menu.addCommand(
 utilities_menu = qtools_menu.addMenu("Utilities")
 
 utilities_menu.addCommand(
-    "Channel Rules (Keep / Remove)",
+    "Channel Rules (Keep and Remove)",
     "from qtools import multi_layer_remove; multi_layer_remove.create_group()",
 )
 

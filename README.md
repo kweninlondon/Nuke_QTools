@@ -186,9 +186,9 @@ from a temporary copy **before** Nuke imports it. Original library files and
 Viewers already in your scene are untouched. This option also applies to the
 bundled CG To Film menu command and defaults to off.
 
-## Channel Rules (Keep / Remove)
+## Channel Rules (Keep and Remove)
 
-Select a source and choose **QTools > Utilities > Channel Rules (Keep / Remove)**.
+Select a source and choose **QTools > Utilities > Channel Rules (Keep and Remove)**.
 This creates a self-contained **Group** with two text fields and an Apply/Update
 button. With no source selected, connect the Group input before applying.
 

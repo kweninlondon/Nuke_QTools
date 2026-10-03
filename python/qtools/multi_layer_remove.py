@@ -60,7 +60,7 @@ def create_group():
         if source is not None:
             group.setInput(0, source)
             group.setXYpos(source.xpos(), source.ypos() + source.screenHeight() + 50)
-        if nuke.env.get("gui", False):
+        if nuke.GUI:
             group.showControlPanel()
         return group
     except Exception:
