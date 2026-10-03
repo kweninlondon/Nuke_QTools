@@ -51,7 +51,6 @@ def create_group():
         result.setValue('Not applied yet.')
         result.setFlag(nuke.STARTLINE)
         result.setFlag(nuke.READ_ONLY)
-        result.setFlag(nuke.RESIZABLE)
         group.addKnob(result)
         group.addKnob(nuke.Text_Knob('rules_help', '',
             'Blank Keep preserves channels not removed. Nonempty Keep selects only matching channels.\n'
