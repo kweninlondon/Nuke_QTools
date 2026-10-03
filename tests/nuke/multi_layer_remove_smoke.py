@@ -30,6 +30,15 @@ assert group.Class() == 'Group'
 assert len([n for n in group.nodes() if n.Class() == 'Remove']) == 5
 assert group['apply_rules'].label() == 'Update'
 name = group.name()
+for node in nuke.selectedNodes():
+    node.setSelected(False)
+second = multi_layer_remove.create_group()
+for node in nuke.selectedNodes():
+    node.setSelected(False)
+third = multi_layer_remove.create_group()
+assert len({group.name(), second.name(), third.name()}) == 3
+nuke.delete(second)
+nuke.delete(third)
 
 with tempfile.TemporaryDirectory() as folder:
     path = os.path.join(folder, 'channel_rules.nk')

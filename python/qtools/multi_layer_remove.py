@@ -29,7 +29,8 @@ def create_group():
     undo.begin('Create Channel Rules')
     group = None
     try:
-        group = nuke.nodes.Group(name='ChannelRules')
+        group = nuke.nodes.Group()
+        group.setName('ChannelRules', uncollide=True)
         # Screenshot RGB (0.640, 0.226, 0.367), packed as Nuke RGBA.
         group['tile_color'].setValue(0xA33A5EFF)
         group.addKnob(nuke.Tab_Knob('channel_rules', 'Channel Rules'))
