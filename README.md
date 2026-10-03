@@ -189,12 +189,12 @@ bundled CG To Film menu command and defaults to off.
 ## Channel Rules (Keep and Remove)
 
 Select a source and choose **QTools > Utilities > Channel Rules (Keep and Remove)**.
-This creates a self-contained **Group** with two text fields and an Apply/Update
+This creates a self-contained **Group** with two multiline text fields and an Apply/Update
 button. With no source selected, connect the Group input before applying.
 
-- **Remove**: comma-separated patterns for unwanted layers or individual channels.
+- **Remove**: comma- or newline-separated patterns for unwanted layers or individual channels.
   `*beauty` removes all channels in layers ending in `beauty`.
-- **Keep**: when nonempty, only matching layers/channels are retained. Evaluated
+- **Keep**: defaults to `rgba`. When nonempty, only matching layers/channels are retained. Evaluated
   against the original input, so it overrides Remove. For example, Remove `*`
   and Keep `*_ENV*` retain the layers containing `_ENV`.
 - Patterns are case-sensitive shell wildcards (`*`, `?`, `[abc]`), not regular
@@ -206,7 +206,9 @@ button. With no source selected, connect the Group input before applying.
 **Apply** starts with orange text. After a successful apply it becomes **Update**
 in the normal colour. Editing either rule or reconnecting the input turns it
 orange again; clicking updates the graph and the read-only **Channels Removed**
-list. Until applied, the Group is a pass-through Input → Output.
+list. Fully removed layers appear once (for example `Emission`); partial
+removals show individual channels. Commas and line breaks can be mixed freely.
+Until applied, the Group is a pass-through Input → Output.
 
 Internally the tool computes the unwanted channels and creates only native
 **Remove** nodes in remove mode, with up to four masks per node. Entire unwanted

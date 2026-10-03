@@ -12,6 +12,22 @@ class ChannelRulesTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {'nuke': types.ModuleType('nuke')}):
             cls.tool = importlib.import_module('qtools.channel_rules_runtime')
 
+    def test_newlines_and_commas_are_equivalent_in_both_fields(self):
+        channels = ['rgba.red', 'light1.red', 'light2.red', 'other.red']
+        for text in ('rgba\nlight1\nlight2', 'rgba\r\nlight1, light2',
+                     'rgba\rlight1\rlight2', 'rgba,\n light1, \nlight2,'):
+            self.assertEqual(self.tool.resolve(channels, '', text),
+                             self.tool.resolve(channels, '', 'rgba, light1, light2'))
+            self.assertEqual(self.tool.resolve(channels, text, ''),
+                             self.tool.resolve(channels, 'rgba, light1, light2', ''))
+
+    def test_report_masks_collapse_full_layers_preserve_partial_channels(self):
+        channels = ['Emission.red', 'Emission.green', 'Emission.blue',
+                    'rgba.red', 'rgba.green']
+        batches = self.tool.removal_masks(channels, channels[:-1])
+        self.assertEqual([mask for batch in batches for mask in batch],
+                         ['Emission', 'rgba.red'])
+
     def test_blank_rules_preserve_everything(self):
         self.assertEqual(self.tool.resolve(['rgba.red', 'depth.Z'], '', ''),
                          (['depth.Z', 'rgba.red'], []))

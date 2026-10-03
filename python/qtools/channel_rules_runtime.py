@@ -8,7 +8,7 @@ import nuke
 
 
 def patterns(text):
-    return [part.strip() for part in text.split(',') if part.strip()]
+    return [part.strip() for part in text.replace('\r', ',').replace('\n', ',').split(',') if part.strip()]
 
 
 def matches(channel, rules):
@@ -87,7 +87,7 @@ def apply_rules(group):
             nuke.delete(node)
         created = []
         group['removed_channels'].setValue(
-            '\n'.join('- ' + channel for channel in removed) or '(none)')
+            '\n'.join('- ' + mask for batch in batches for mask in batch) or '(none)')
         group['rules_applied'].setValue(True)
         group['apply_rules'].setLabel('Update')
     except Exception:

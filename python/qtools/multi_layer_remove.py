@@ -32,9 +32,11 @@ def create_group():
         group = nuke.nodes.Group(name='ChannelRules')
         group.addKnob(nuke.Tab_Knob('channel_rules', 'Channel Rules'))
         for name, label in (('remove_rules', 'Remove'), ('keep_rules', 'Keep')):
-            knob = nuke.String_Knob(name, label)
-            knob.setTooltip('Comma-separated, case-sensitive wildcards matching layers or channels. '
+            knob = nuke.Multiline_Eval_String_Knob(name, label)
+            knob.setTooltip('Comma- or newline-separated, case-sensitive wildcards matching layers or channels. '
                             'Keep, when nonempty, is the final allowlist and overrides Remove.')
+            if name == 'keep_rules':
+                knob.setValue('rgba')
             group.addKnob(knob)
         applied = nuke.Boolean_Knob('rules_applied', '')
         applied.setVisible(False)
