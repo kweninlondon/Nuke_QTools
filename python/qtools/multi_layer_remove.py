@@ -42,11 +42,13 @@ def create_group():
         applied.setVisible(False)
         group.addKnob(applied)
         button = nuke.PyScript_Knob('apply_rules', '<font color="#f0a030">Apply</font>')
+        button.setFlag(nuke.STARTLINE)
         button.setValue(button_script)
         group.addKnob(button)
         result = nuke.Multiline_Eval_String_Knob('removed_channels', 'Channels Removed')
         result.setValue('Not applied yet.')
-        result.setEnabled(False)
+        result.setFlag(nuke.STARTLINE)
+        result.setFlag(nuke.READ_ONLY)
         group.addKnob(result)
         group.addKnob(nuke.Text_Knob('rules_help', '',
             'Blank Keep preserves channels not removed. Nonempty Keep selects only matching channels.\n'
