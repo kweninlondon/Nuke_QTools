@@ -30,6 +30,8 @@ def create_group():
     group = None
     try:
         group = nuke.nodes.Group(name='ChannelRules')
+        # Screenshot RGB (0.640, 0.226, 0.367), packed as Nuke RGBA.
+        group['tile_color'].setValue(0xA33A5EFF)
         group.addKnob(nuke.Tab_Knob('channel_rules', 'Channel Rules'))
         for name, label in (('remove_rules', 'Remove'), ('keep_rules', 'Keep')):
             knob = nuke.Multiline_Eval_String_Knob(name, label)
@@ -49,6 +51,7 @@ def create_group():
         result.setValue('Not applied yet.')
         result.setFlag(nuke.STARTLINE)
         result.setFlag(nuke.READ_ONLY)
+        result.setFlag(nuke.RESIZABLE)
         group.addKnob(result)
         group.addKnob(nuke.Text_Knob('rules_help', '',
             'Blank Keep preserves channels not removed. Nonempty Keep selects only matching channels.\n'
