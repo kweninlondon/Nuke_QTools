@@ -36,6 +36,9 @@ class Node:
     def name(self):
         return self._name
 
+    def fullName(self):
+        return self._name
+
     def setName(self, name):
         self._name = name
 
@@ -119,7 +122,8 @@ class ReadSwapTests(unittest.TestCase):
     def import_read(self, loader, context, options):
         self.loads.append((context, options))
         new = Node("Read_exr", path="asset.####.exr")
-        new.container = {"representation": context["representation"]["id"]}
+        new.container = {"representation": context["representation"]["id"],
+                         "project_name": context["project"]["name"]}
         self.nodes.append(new)
 
     def swap(self, replace=True):
@@ -154,7 +158,80 @@ class ReadSwapTests(unittest.TestCase):
         self.assertIn(self.old, self.nodes)
         self.assertEqual(self.merge.links, [self.old, None, self.old])
         self.assertEqual(self.viewer.links, [None, self.old])
-        self.assertEqual(new.position, (200, 90))
+        self.assertEqual(new.position, (40, -30))
+
+    def test_further_alongside_loads_stack_above_existing_nodes(self):
+        first = self.swap(False)
+        second = self.swap(False)
+        self.assertEqual(first.position, (40, -30))
+        self.assertEqual(second.position, (40, -150))
+        self.assertEqual(self.old.position, (40, 90))
+
+    def test_batch_row_switches_back_after_replacement(self):
+        row = self.module.BatchRow(self.old)
+        self.assertTrue(row.checked)
+        self.assertEqual(row.target_id, "exr")
+        new = row.apply(True)
+        self.assertIs(row.node, new)
+        self.assertEqual(row.context["representation"]["id"], "exr")
+        self.assertEqual(row.target_id, "mov")
+        self.assertFalse(row.checked)
+        row.checked = True
+        back = row.apply(True)
+        self.assertIs(row.node, back)
+        self.assertEqual(back.container["representation"], "mov")
+
+    def test_batch_multiple_options_require_a_choice_in_both_directions(self):
+        self.siblings.extend([repre("exr2", "workingPlate", "exr"),
+                              repre("mov2", "prores", "mov")])
+        row = self.module.BatchRow(self.old)
+        self.assertIsNone(row.target_id)
+        with self.assertRaisesRegex(RuntimeError, "Choose"):
+            row.apply(True)
+        row.target_id = "exr2"
+        row.apply(True)
+        self.assertEqual({item["id"] for item in row.candidates}, {"mov", "mov2"})
+        self.assertIsNone(row.target_id)
+
+    def test_batch_alongside_reports_both_formats_from_scene(self):
+        row = self.module.BatchRow(self.old)
+        new = row.apply(False)
+        self.assertIs(row.node, self.old)
+        self.assertFalse(row.checked)
+        loaded = self.module.loaded_formats(self.context, self.siblings, self.nodes)
+        self.assertEqual(loaded, {"mov": [self.old], "exr": [new]})
+        # External deletion is reflected on the next refresh, not a stale flag.
+        self.delete(new)
+        loaded = self.module.loaded_formats(self.context, self.siblings, self.nodes)
+        self.assertEqual(loaded, {"mov": [self.old], "exr": []})
+
+    def test_loaded_status_excludes_other_projects_versions_and_edited_files(self):
+        other = Node("Other", path="asset.exr")
+        other.container = {"project_name": "Different", "representation": "exr"}
+        older = Node("Older", path="asset.exr")
+        older.container = {"project_name": "Library", "representation": "old-version-exr"}
+        edited = Node("Edited", path="changed.mov")
+        edited.container = {"project_name": "Library", "representation": "exr"}
+        loaded = self.module.loaded_formats(
+            self.context, self.siblings, [self.old, other, older, edited]
+        )
+        self.assertEqual(loaded, {"mov": [self.old], "exr": []})
+
+    def test_one_invalid_batch_row_does_not_prevent_another_loading(self):
+        invalid = Node("Manual")
+        invalid_row = self.module.BatchRow(invalid)
+        valid_row = self.module.BatchRow(self.old)
+        self.assertIn("metadata", invalid_row.error)
+        self.assertFalse(invalid_row.checked)
+        valid_row.apply(False)
+        self.assertEqual(len(self.loads), 1)
+
+    def test_changed_source_file_is_rejected_while_window_is_open(self):
+        row = self.module.BatchRow(self.old)
+        self.old.knobs["file"] = Knob("edited.exr")
+        with self.assertRaisesRegex(RuntimeError, "file format changed"):
+            row.apply(True)
+        self.assertFalse(self.loads)
 
     def test_partial_load_failure_cleans_up_and_restores_selection(self):
         def fail(*args, **kwargs):

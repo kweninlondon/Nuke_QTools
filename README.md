@@ -252,17 +252,27 @@ Run it in a fresh licensed Nuke session with `Nuke -t <path-to-test>`.
 Local native validation was blocked by the absence of a Nuke render licence;
 the button appearance and actual Nuke evaluation still require that check.
 
-## Switch EXR / MOV (AYON)
+## Switch EXR ↔ MOV (AYON)
 
-Launch Nuke through AYON, select one AYON-loaded Read, then choose **QTools >
-Utilities > Switch EXR / MOV (AYON)**. The tool queries AYON for the opposite
-format on the same product and published version. If several EXR or MOV
-representations exist, choose one by its AYON representation name.
+Launch Nuke through AYON, select one or more AYON-loaded Reads, then choose
+**QTools > Utilities > Switch EXR ↔ MOV (AYON)**. A persistent batch table shows
+the product name, source Read, target representation, version, and which EXR
+and MOV representations are actually loaded in the scene for that version.
+Check the rows to process. A single target appears as plain text; multiple
+EXR or MOV targets require a choice from a dropdown before running.
 
-- **Replace selected Read** loads through AYON's compatible **Load Clip**
+- **Replace selected Reads** loads through AYON's compatible **Load Clip**
   plugin, reconnects every downstream input (including Viewer inputs), and
   preserves the original Read's name and graph position before deleting it.
-- **Load alongside** loads a separate Read beside the original.
+- **Load alongside** loads a separate Read directly above the original, with
+  a clear gap. Further loads stack upward to avoid existing nodes.
+
+The window stays open after both actions. Successful rows are unchecked and
+the loaded-format columns refresh, showing **Both formats loaded** when both
+exist. Replacement updates the row to the new Read so it can be switched back.
+Failures are shown per row without stopping the remaining batch. Use **Refresh
+loaded status** after scene edits or Undo, or **Reload from selection** to
+start a new batch with the graph selection.
 
 AYON supplies the file path, source frame range, slate handling, colorspace and
 tracking metadata. The loader's start-at-workfile option follows the selected

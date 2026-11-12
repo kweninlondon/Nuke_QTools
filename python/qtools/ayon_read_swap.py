@@ -10,7 +10,8 @@ import traceback
 import nuke
 
 
-TITLE = "Switch EXR / MOV"
+TITLE = "Switch EXR ↔ MOV"
+_WINDOW = None
 
 
 def _ayon():
@@ -38,8 +39,8 @@ def _extension(representation):
     return next(iter(extensions)) if len(extensions) == 1 else ""
 
 
-def find_counterparts(read_node):
-    """Return source context and every opposite-format sibling from AYON."""
+def find_product_representations(read_node):
+    """Resolve the selected Read and all representations of its exact version."""
     api, load, parse_container, current_project = _ayon()
     container = parse_container(read_node)
     if not container or not container.get("representation"):
@@ -60,85 +61,105 @@ def find_counterparts(read_node):
             "The Read's file format differs from its AYON metadata. "
             "Reload the correct representation through AYON first."
         )
-    target = "exr" if extension == "mov" else "mov"
-    siblings = api.get_representations(project, version_ids={source["versionId"]})
-    candidates = sorted(
-        (item for item in siblings if _extension(item) == target),
+    siblings = list(api.get_representations(
+        project, version_ids={source["versionId"]}
+    ))
+    return context, siblings
+
+
+def counterpart_candidates(context, representations):
+    target = "exr" if _extension(context["representation"]) == "mov" else "mov"
+    return sorted(
+        (item for item in representations if _extension(item) == target),
         key=lambda item: (item["name"].lower(), item["id"]),
     )
+
+
+def find_counterparts(read_node):
+    """Return source context and every opposite-format sibling from AYON."""
+    context, siblings = find_product_representations(read_node)
+    candidates = counterpart_candidates(context, siblings)
     if not candidates:
+        target = "EXR" if _extension(context["representation"]) == "mov" else "MOV"
         raise RuntimeError(
-            "No {} representation is published on this product version."
-            .format(target.upper())
+            "No {} representation is published on this product version.".format(target)
         )
     return context, candidates
 
 
-def _choose(context, candidates):
-    """One dialog; always require a deliberate choice when ambiguous."""
-    try:
-        from PySide6 import QtWidgets
-    except ImportError:
-        from PySide2 import QtWidgets
+def scene_reads():
+    """Include Reads in Groups regardless of which graph is currently open."""
+    with nuke.root():
+        return list(nuke.allNodes("Read", recurseGroups=True))
 
-    parent = QtWidgets.QApplication.activeWindow()
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle(TITLE)
-    dialog.setMinimumWidth(480)
-    layout = QtWidgets.QVBoxLayout(dialog)
-    version = context["version"]["version"]
-    version_label = "hero" if version < 0 else "v{:03d}".format(version)
-    label = QtWidgets.QLabel("{} / {} / {}".format(
-        context["folder"]["path"], context["product"]["name"], version_label
-    ))
-    label.setWordWrap(True)
-    layout.addWidget(label)
-    layout.addWidget(QtWidgets.QLabel("Representation to load:"))
-    representations = QtWidgets.QComboBox()
-    if len(candidates) > 1:
-        representations.addItem("Choose a representation…", None)
-    for item in candidates:
-        representations.addItem("{} ({})".format(
-            item["name"], _extension(item).upper()
-        ), item["id"])
-        index = representations.count() - 1
-        # Paths help distinguish similar output names; these are display only.
-        path = item.get("files", [{}])[0].get("path", "") if item.get("files") else ""
-        representations.setItemData(index, path, 3)  # Qt.ToolTipRole
-    layout.addWidget(representations)
-    explanation = QtWidgets.QLabel(
-        "Replace preserves the selected Read's name, position and connections.\n"
-        "Load alongside keeps the selected Read and loads a separate node."
-    )
-    explanation.setWordWrap(True)
-    layout.addWidget(explanation)
-    buttons = QtWidgets.QHBoxLayout()
-    layout.addLayout(buttons)
-    result = []
 
-    def accept(replace):
-        result.append((representations.currentData(), replace))
-        dialog.accept()
+def loaded_formats(context, representations, nodes):
+    """Report actual scene nodes for this exact project/version only."""
+    _, _, parse_container, current_project = _ayon()
+    formats = {item["id"]: _extension(item) for item in representations}
+    formats[context["representation"]["id"]] = _extension(context["representation"])
+    result = {"exr": [], "mov": []}
+    for node in nodes:
+        container = parse_container(node)
+        if not container:
+            continue
+        project = container.get("project_name") or current_project()
+        if project != context["project"]["name"]:
+            continue
+        extension = formats.get(container.get("representation"))
+        actual_extension = os.path.splitext(node["file"].value())[1].lower().lstrip(".")
+        if extension in result and actual_extension == extension:
+            result[extension].append(node)
+    return result
 
-    replace_button = QtWidgets.QPushButton("Replace selected Read")
-    alongside_button = QtWidgets.QPushButton("Load alongside")
-    cancel_button = QtWidgets.QPushButton("Cancel")
-    replace_button.clicked.connect(lambda: accept(True))
-    alongside_button.clicked.connect(lambda: accept(False))
-    cancel_button.clicked.connect(dialog.reject)
-    for button in (replace_button, alongside_button, cancel_button):
-        buttons.addWidget(button)
 
-    def update_buttons(*args):
-        enabled = representations.currentData() is not None
-        replace_button.setEnabled(enabled)
-        alongside_button.setEnabled(enabled)
+class BatchRow:
+    """Persistent row state, separate from Qt so batch behavior can be tested."""
 
-    representations.currentIndexChanged.connect(update_buttons)
-    update_buttons()
-    execute = getattr(dialog, "exec", None) or dialog.exec_
-    execute()
-    return result[0] if result else None
+    def __init__(self, node):
+        self.node = node
+        self.context = None
+        self.representations = []
+        self.candidates = []
+        self.target_id = None
+        self.checked = False
+        self.error = ""
+        self.status = ""
+        try:
+            self.context, self.representations = find_product_representations(node)
+            self._set_candidates()
+            self.checked = bool(self.candidates)
+        except Exception as error:
+            self.error = str(error)
+
+    def _set_candidates(self):
+        self.candidates = counterpart_candidates(self.context, self.representations)
+        self.target_id = self.candidates[0]["id"] if len(self.candidates) == 1 else None
+        if not self.candidates:
+            self.error = "No opposite-format representation on this version."
+
+    def apply(self, replace):
+        if self.error:
+            raise RuntimeError(self.error)
+        target = next((item for item in self.candidates
+                       if item["id"] == self.target_id), None)
+        if target is None:
+            raise RuntimeError("Choose a representation first.")
+        _, _, parse_container, _ = _ayon()
+        container = parse_container(self.node)
+        if not container or container.get("representation") != self.context["representation"]["id"]:
+            raise RuntimeError("The source Read changed. Reload the selection.")
+        source_extension = os.path.splitext(self.node["file"].value())[1].lower().lstrip(".")
+        if source_extension != _extension(self.context["representation"]):
+            raise RuntimeError("The source file format changed. Reload the selection.")
+        new_read = load_counterpart(self.node, self.context, target, replace)
+        self.checked = False
+        self.status = "{} {}".format("Replaced with" if replace else "Loaded", target["name"])
+        if replace:
+            self.node = new_read
+            self.context = dict(self.context, representation=target)
+            self._set_candidates()
+        return new_read
 
 
 def _connections(nodes):
@@ -150,6 +171,33 @@ def _restore_connections(connections):
     for node, index, upstream in connections:
         if node.input(index) != upstream:
             node.setInput(index, upstream)
+
+
+def _alongside_position(read_node, nodes, new_read=None):
+    """Place above the source, leaving 60 pixels between node bounds."""
+    def size(node):
+        try:
+            return max(node.screenWidth(), 80), max(node.screenHeight(), 60)
+        except AttributeError:
+            return 80, 60
+
+    x = read_node.xpos()
+    width, height = size(new_read if new_read is not None else read_node)
+    y = read_node.ypos() - height - 60
+    # Backdrops enclose nodes rather than occupying their usable space.
+    obstacles = [node for node in nodes if node.Class() != "BackdropNode"]
+    while True:
+        collisions = []
+        for node in obstacles:
+            other_width, other_height = size(node)
+            if (x < node.xpos() + other_width + 20
+                    and x + width + 20 > node.xpos()
+                    and y < node.ypos() + other_height + 60
+                    and y + height + 60 > node.ypos()):
+                collisions.append(node.ypos() - height - 60)
+        if not collisions:
+            return x, y
+        y = min(collisions)
 
 
 def load_counterpart(read_node, context, representation, replace):
@@ -198,7 +246,8 @@ def load_counterpart(read_node, context, representation, replace):
             raise RuntimeError("AYON returned a Read without a file path.")
         # Defend against loader callbacks inserting the new Read in the graph.
         _restore_connections(connections)
-        new_read.setXYpos(old_position[0] + (0 if replace else 160), old_position[1])
+        position = old_position if replace else _alongside_position(read_node, before, new_read)
+        new_read.setXYpos(*position)
         if replace:
             for node, index, upstream in connections:
                 if upstream == read_node:
@@ -222,25 +271,20 @@ def load_counterpart(read_node, context, representation, replace):
 
 
 def show_dialog():
-    """QTools menu entry point."""
-    selected = nuke.selectedNodes()
-    if len(selected) != 1 or selected[0].Class() != "Read":
-        nuke.message("Select exactly one AYON-loaded EXR or MOV Read node.")
+    """Open a retained, modeless batch window for the selected Reads."""
+    global _WINDOW
+    reads = [node for node in nuke.selectedNodes() if node.Class() == "Read"]
+    if not reads:
+        nuke.message("Select one or more AYON-loaded EXR or MOV Read nodes.")
         return
-    read_node = selected[0]
     try:
-        context, candidates = find_counterparts(read_node)
-        choice = _choose(context, candidates)
-        if choice is None:
-            return
-        representation_id, replace = choice
-        representation = next(item for item in candidates if item["id"] == representation_id)
-        parent_path = read_node.fullName().rpartition(".")[0]
-        parent = nuke.toNode(parent_path) if parent_path else nuke.root()
-        with parent:
-            with nuke.Undo():
-                nuke.Undo.name(TITLE)
-                load_counterpart(read_node, context, representation, replace)
+        from .ayon_read_swap_ui import ReadSwapWindow
+        if _WINDOW is not None:
+            _WINDOW.close()
+        _WINDOW = ReadSwapWindow(reads)
+        _WINDOW.show()
+        _WINDOW.raise_()
+        _WINDOW.activateWindow()
     except Exception as error:
         nuke.tprint(traceback.format_exc())
         nuke.message("{}:\n\n{}".format(TITLE, error))
