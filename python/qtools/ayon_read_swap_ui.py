@@ -1,13 +1,13 @@
-"""Persistent batch view for the AYON Read representation switcher."""
+"""Compact selection summary and sequential AYON representation choices."""
 
 import traceback
 
 import nuke
 
 try:
-    from PySide6 import QtCore, QtGui, QtWidgets
+    from PySide6 import QtCore, QtWidgets
 except ImportError:
-    from PySide2 import QtCore, QtGui, QtWidgets
+    from PySide2 import QtCore, QtWidgets
 
 from . import ayon_read_swap as swap
 
@@ -17,183 +17,113 @@ class ReadSwapWindow(QtWidgets.QDialog):
         super().__init__(QtWidgets.QApplication.activeWindow())
         self.setWindowTitle(swap.TITLE)
         self.setModal(False)
-        self.resize(1160, 430)
-        self.setMinimumSize(850, 300)
-        self.rows = []
+        self.setMinimumWidth(520)
+        self.resize(600, 340)
+        self.plan = swap.SelectionPlan([swap.BatchRow(node) for node in reads])
         self._busy = False
         layout = QtWidgets.QVBoxLayout(self)
-        heading = QtWidgets.QLabel("EXR ↔ MOV · AYON representations")
-        font = heading.font()
-        font.setPointSize(font.pointSize() + 2)
+        self.heading = QtWidgets.QLabel()
+        font = self.heading.font()
         font.setBold(True)
-        heading.setFont(font)
-        layout.addWidget(heading)
-        self.instructions = QtWidgets.QLabel(
-            "Check the Reads to process. Choose an output where several are available."
-        )
+        self.heading.setFont(font)
+        layout.addWidget(self.heading)
+        self.instructions = QtWidgets.QLabel()
+        self.instructions.setWordWrap(True)
         layout.addWidget(self.instructions)
-        self.single = QtWidgets.QWidget()
-        single_layout = QtWidgets.QVBoxLayout(self.single)
-        single_layout.setContentsMargins(0, 0, 0, 0)
-        self.product_label = QtWidgets.QLabel()
-        self.product_label.setWordWrap(True)
-        self.source_label = QtWidgets.QLabel()
-        single_layout.addWidget(self.product_label)
-        single_layout.addWidget(self.source_label)
-        single_layout.addWidget(QtWidgets.QLabel("Representation to load:"))
-        self.single_choice = QtWidgets.QVBoxLayout()
-        single_layout.addLayout(self.single_choice)
-        self.loaded_label = QtWidgets.QLabel()
-        self.result_label = QtWidgets.QLabel()
-        self.result_label.setWordWrap(True)
-        single_layout.addWidget(self.loaded_label)
-        single_layout.addWidget(self.result_label)
-        layout.addWidget(self.single)
-        self.table = QtWidgets.QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels([
-            "Use", "Product", "Source Read", "Load representation",
-            "EXR in scene", "MOV in scene", "Version", "Result",
-        ])
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().hide()
-        self.table.verticalHeader().setDefaultSectionSize(38)
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        header = self.table.horizontalHeader()
-        for column, width in enumerate((44, 260, 145, 230, 100, 100, 70, 200)):
-            self.table.setColumnWidth(column, width)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        header.setSectionResizeMode(7, QtWidgets.QHeaderView.Stretch)
-        self.table.itemChanged.connect(self._check_changed)
-        layout.addWidget(self.table)
-        self.summary = QtWidgets.QLabel()
-        self.summary.setWordWrap(True)
-        layout.addWidget(self.summary)
-        tools = QtWidgets.QHBoxLayout()
-        layout.addLayout(tools)
-        self.selection_button = QtWidgets.QPushButton("Reload from selection")
-        self.selection_button.clicked.connect(self._reload_selection)
-        self.refresh_button = QtWidgets.QPushButton("Refresh loaded status")
-        self.refresh_button.clicked.connect(self._render)
-        tools.addWidget(self.selection_button)
-        tools.addWidget(self.refresh_button)
-        tools.addStretch()
-        actions = QtWidgets.QHBoxLayout()
-        layout.addLayout(actions)
+        self.automatic_list = QtWidgets.QListWidget()
+        self.automatic_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.automatic_list.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.automatic_list.setMaximumHeight(180)
+        layout.addWidget(self.automatic_list)
+        self.detail = QtWidgets.QWidget()
+        detail_layout = QtWidgets.QVBoxLayout(self.detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.product = QtWidgets.QLabel()
+        self.product.setTextFormat(QtCore.Qt.PlainText)
+        self.product.setWordWrap(True)
+        self.source = QtWidgets.QLabel()
+        self.source.setTextFormat(QtCore.Qt.PlainText)
+        detail_layout.addWidget(self.product)
+        detail_layout.addWidget(self.source)
+        detail_layout.addWidget(QtWidgets.QLabel("Representation to load:"))
+        self.choice_layout = QtWidgets.QVBoxLayout()
+        detail_layout.addLayout(self.choice_layout)
+        self.loaded = QtWidgets.QLabel()
+        detail_layout.addWidget(self.loaded)
+        layout.addWidget(self.detail)
+        self.result = QtWidgets.QLabel()
+        self.result.setTextFormat(QtCore.Qt.PlainText)
+        self.result.setWordWrap(True)
+        layout.addWidget(self.result)
+        layout.addWidget(QtWidgets.QLabel(
+            "Replace keeps the Read's name, position and connections.\n"
+            "Load alongside places each new Read above its source."
+        ))
+        buttons = QtWidgets.QHBoxLayout()
+        layout.addLayout(buttons)
+        self.back_button = QtWidgets.QPushButton("Back")
+        self.back_button.clicked.connect(self._back)
         self.replace_button = QtWidgets.QPushButton("Replace selected Reads")
+        self.replace_button.clicked.connect(lambda: self._start(True))
         self.alongside_button = QtWidgets.QPushButton("Load alongside")
-        self.replace_button.clicked.connect(lambda: self._run(True))
-        self.alongside_button.clicked.connect(lambda: self._run(False))
-        close_button = QtWidgets.QPushButton("Close")
-        close_button.clicked.connect(self.close)
-        for button in (self.replace_button, self.alongside_button, close_button):
+        self.alongside_button.clicked.connect(lambda: self._start(False))
+        self.next_button = QtWidgets.QPushButton("Next")
+        self.next_button.clicked.connect(self._next)
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        for button in (self.back_button, self.replace_button, self.alongside_button,
+                       self.next_button, self.cancel_button):
             button.setAutoDefault(False)
-            actions.addWidget(button)
-        self._set_reads(reads)
+            buttons.addWidget(button)
+        self._overview()
 
-    def _set_reads(self, reads):
-        self.rows = [swap.BatchRow(node) for node in reads]
-        single = len(self.rows) == 1
-        self.single.setVisible(single)
-        self.table.setVisible(not single)
-        self.instructions.setVisible(not single)
-        self.replace_button.setText("Replace selected Read" if single else "Replace selected Reads")
-        self.setMinimumSize(500, 280) if single else self.setMinimumSize(850, 300)
-        self.resize(560, 310) if single else self.resize(1160, 430)
-        self._render()
+    @staticmethod
+    def _target_text(row):
+        target = next(item for item in row.candidates if item["id"] == row.target_id)
+        return "{} ({})".format(target["name"], swap._extension(target).upper())
 
-    def _reload_selection(self):
-        reads = [node for node in nuke.selectedNodes() if node.Class() == "Read"]
-        if reads:
-            self._set_reads(reads)
-        else:
-            self.summary.setText("Select one or more Reads in the graph, then reload.")
-
-    def _item(self, row, column, text, tooltip="", color=None):
-        item = QtWidgets.QTableWidgetItem(text)
-        item.setToolTip(tooltip or text)
-        if color:
-            item.setForeground(QtGui.QColor(color))
-        self.table.setItem(row, column, item)
-        return item
-
-    def _render(self):
-        nodes = swap.scene_reads()
-        if len(self.rows) == 1:
-            self._render_single(self.rows[0], nodes)
-            self._update_actions()
-            return
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(self.rows))
-        try:
-            for index, row in enumerate(self.rows):
-                alive = row.node in nodes
-                if not alive:
-                    row.checked = False
-                context = row.context
-                check = self._item(index, 0, "")
-                check.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
-                check.setCheckState(QtCore.Qt.Checked if row.checked else QtCore.Qt.Unchecked)
-                if row.error or not alive:
-                    check.setFlags(QtCore.Qt.NoItemFlags)
-                product = context["product"]["name"] if context else "Unavailable"
-                tooltip = ("{} · {}".format(context["project"]["name"],
-                           context["folder"]["path"]) if context else row.error)
-                self._item(index, 1, product, tooltip)
-                self._item(index, 2, row.node.name() if alive else "Read deleted")
-                if len(row.candidates) > 1:
-                    combo = QtWidgets.QComboBox()
-                    for candidate in row.candidates:
-                        combo.addItem("{} ({})".format(
-                            candidate["name"], swap._extension(candidate).upper()
-                        ), candidate["id"])
-                    choice = combo.findData(row.target_id)
-                    combo.setCurrentIndex(max(0, choice))
-                    combo.setEnabled(alive and not row.error)
-                    combo.currentIndexChanged.connect(
-                        lambda unused, r=row, widget=combo: self._choose(r, widget)
-                    )
-                    self.table.setCellWidget(index, 3, combo)
-                else:
-                    text = "{} ({})".format(
-                        row.candidates[0]["name"], swap._extension(row.candidates[0]).upper()
-                    ) if row.candidates else "Unavailable"
-                    self._item(index, 3, text)
-                loaded = swap.loaded_formats(context, row.representations, nodes) if context else {}
-                both = bool(loaded.get("exr") and loaded.get("mov"))
-                for column, extension in ((4, "exr"), (5, "mov")):
-                    matching = loaded.get(extension, [])
-                    self._item(index, column,
-                               "Loaded ({})".format(len(matching)) if matching else "—",
-                               "\n".join(node.fullName() for node in matching),
-                               "#8dce9b" if matching else None)
-                version = context["version"]["version"] if context else None
-                self._item(index, 6, "—" if version is None else (
-                    "hero" if version < 0 else "v{:03d}".format(version)
+    def _overview(self):
+        single = len(self.plan.rows) == 1
+        self.heading.setText("Switch representation" if single else
+                             "Switch representations for {} Reads".format(len(self.plan.valid)))
+        self.automatic_list.clear()
+        if not single:
+            for row in self.plan.automatic:
+                item = QtWidgets.QListWidgetItem("{} · {} → {}".format(
+                    row.context["product"]["name"], row.node.name(), self._target_text(row)
                 ))
-                status = row.error or ("Source Read deleted; reload selection." if not alive else row.status)
-                if both and not row.error and alive:
-                    status = "Both formats loaded" + (" · " + status if status else "")
-                self._item(index, 7, status or "Ready",
-                           color="#ec9b8d" if row.error or not alive or row.status.startswith("Failed:") else (
-                               "#8dce9b" if both or row.status else None))
-        finally:
-            self.table.blockSignals(False)
-        self._update_actions()
+                item.setToolTip(item.text())
+                self.automatic_list.addItem(item)
+        self.automatic_list.setVisible(not single and bool(self.plan.automatic))
+        self.detail.setVisible(single and bool(self.plan.valid))
+        if single and self.plan.valid:
+            self._show_read(self.plan.valid[0])
+        count = len(self.plan.choices)
+        self.instructions.setText(
+            "Choose the representation and action." if single else
+            ("{} Reads have one available target. {} Reads need a choice; "
+             "select an action below, then choose their representations one at a time."
+             .format(len(self.plan.automatic), count) if count else
+             "Each Read has one available target. The chosen action applies to all listed Reads.")
+        )
+        errors = ["{}: {}".format(row.node.name(), row.error)
+                  for row in self.plan.rows if row.error]
+        self.result.setText("Skipped:\n" + "\n".join(errors) if errors else "")
+        self.back_button.hide()
+        self.next_button.hide()
+        self.replace_button.show()
+        self.replace_button.setText("Replace selected Read" if single else "Replace selected Reads")
+        self.alongside_button.show()
+        self.replace_button.setEnabled(bool(self.plan.valid))
+        self.alongside_button.setEnabled(bool(self.plan.valid))
 
-    def _render_single(self, row, nodes):
-        alive = row.node in nodes
-        row.checked = alive and not row.error
-        context = row.context
-        product = context["product"]["name"] if context else "Unavailable"
-        self.product_label.setText(product)
-        self.source_label.setText("Read: {}".format(row.node.name()) if alive else "Read deleted")
-        while self.single_choice.count():
-            item = self.single_choice.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+    def _show_read(self, row):
+        self.product.setText(row.context["product"]["name"])
+        self.source.setText("Read: {}".format(row.node.name()))
+        while self.choice_layout.count():
+            widget = self.choice_layout.takeAt(0).widget()
+            if widget:
+                widget.deleteLater()
         if len(row.candidates) > 1:
             widget = QtWidgets.QComboBox()
             for candidate in row.candidates:
@@ -202,97 +132,99 @@ class ReadSwapWindow(QtWidgets.QDialog):
                 ), candidate["id"])
             widget.setCurrentIndex(max(0, widget.findData(row.target_id)))
             widget.currentIndexChanged.connect(
-                lambda unused, r=row, combo=widget: self._choose(r, combo)
+                lambda unused, r=row, combo=widget: setattr(r, "target_id", combo.currentData())
             )
-            widget.setEnabled(row.checked)
         else:
-            candidate = row.candidates[0] if row.candidates else None
-            widget = QtWidgets.QLabel("{} ({})".format(
-                candidate["name"], swap._extension(candidate).upper()
-            ) if candidate else "Unavailable")
-        self.single_choice.addWidget(widget)
-        loaded = swap.loaded_formats(context, row.representations, nodes) if context else {}
-        self.loaded_label.setText("   ·   ".join(
-            "{}: {}".format(extension.upper(), "Loaded ({})".format(len(loaded[extension]))
-                           if loaded.get(extension) else "Not loaded")
-            for extension in ("exr", "mov")
+            widget = QtWidgets.QLabel(self._target_text(row))
+        self.choice_layout.addWidget(widget)
+        loaded = swap.loaded_formats(row.context, row.representations, swap.scene_reads())
+        self.loaded.setText("   ·   ".join(
+            "{}: {}".format(ext.upper(), "Loaded ({})".format(len(loaded[ext]))
+                           if loaded[ext] else "Not loaded") for ext in ("exr", "mov")
         ))
-        both = bool(loaded.get("exr") and loaded.get("mov"))
-        status = row.error or (row.status if alive else "Source Read deleted; reload selection.")
-        if both:
-            status = "Both formats loaded" + (" · " + status if status else "")
-        self.result_label.setText(status)
 
-    def _choose(self, row, combo):
-        row.target_id = combo.currentData()
-        self._update_actions()
-
-    def _check_changed(self, item):
-        if item.column() == 0:
-            self.rows[item.row()].checked = item.checkState() == QtCore.Qt.Checked
-            self._update_actions()
-
-    def _update_actions(self):
-        checked = [row for row in self.rows if row.checked and not row.error]
-        missing = sum(row.target_id is None for row in checked)
-        enabled = bool(checked) and not missing and not self._busy
-        self.replace_button.setEnabled(enabled)
-        self.alongside_button.setEnabled(enabled)
-        if len(self.rows) == 1:
-            self.summary.setText(
-                "Replace keeps the Read's name, position and connections.\n"
-                "Load alongside places a new Read above it."
-            )
-            return
-        self.summary.setText(
-            "{} of {} Reads checked{}".format(
-                len(checked), len(self.rows),
-                " · Choose a representation for {} checked row(s).".format(missing)
-                if missing else " · Successful rows are unchecked; the window stays open."
-            )
-        )
-
-    def _run(self, replace):
+    def _start(self, replace):
         if self._busy:
             return
-        checked = [row for row in self.rows if row.checked and not row.error]
-        if not checked or any(row.target_id is None for row in checked):
+        self.plan.start(replace)
+        if self.plan.ready:
+            self._run()
+        else:
+            self._review()
+
+    def _review(self):
+        row = self.plan.current
+        self.heading.setText("Choose representation · {} of {}".format(
+            self.plan.choice_index + 1, len(self.plan.choices)
+        ))
+        self.instructions.setText(
+            "The same {} action will apply to all {} Reads after the last choice."
+            .format("Replace" if self.plan.replace else "Load alongside", len(self.plan.valid))
+        )
+        self.automatic_list.hide()
+        self.detail.show()
+        self._show_read(row)
+        self.result.clear()
+        self.replace_button.hide()
+        self.alongside_button.hide()
+        self.back_button.show()
+        self.next_button.show()
+        last = self.plan.choice_index == len(self.plan.choices) - 1
+        self.next_button.setText(
+            ("Replace {} Reads" if self.plan.replace else "Load {} Reads alongside")
+            .format(len(self.plan.valid)) if last else "Next"
+        )
+
+    def _next(self):
+        self.plan.advance()
+        if self.plan.ready:
+            self._run()
+        else:
+            self._review()
+
+    def _back(self):
+        self.plan.back()
+        if self.plan.replace is None:
+            self._overview()
+        else:
+            self._review()
+
+    def _run(self):
+        if self._busy or not self.plan.ready:
             return
         self._busy = True
-        self.table.setEnabled(False)
-        self.single.setEnabled(False)
-        self.selection_button.setEnabled(False)
-        self.refresh_button.setEnabled(False)
-        self._update_actions()
-        completed, failed = 0, 0
+        self.setEnabled(False)
+        failures = []
+        skipped = [row for row in self.plan.rows if row.error]
+        completed = 0
         try:
             with nuke.Undo():
                 nuke.Undo.name(swap.TITLE)
-                for row in checked:
+                for row in self.plan.valid:
                     try:
-                        # Validate handles again: users can edit the scene while
-                        # this modeless window is open.
                         if row.node not in swap.scene_reads():
-                            raise RuntimeError("Source Read was deleted; reload the selection.")
+                            raise RuntimeError("Source Read was deleted.")
                         path = row.node.fullName().rpartition(".")[0]
                         parent = nuke.toNode(path) if path else nuke.root()
                         with parent:
-                            row.apply(replace)
+                            row.apply(self.plan.replace)
                         completed += 1
                     except Exception as error:
-                        row.status = "Failed: {}".format(error)
+                        row.status = "{}: {}".format(row.node.name(), error)
+                        failures.append(row)
                         nuke.tprint(traceback.format_exc())
-                        failed += 1
         finally:
             self._busy = False
-            self.table.setEnabled(True)
-            self.single.setEnabled(True)
-            self.selection_button.setEnabled(True)
-            self.refresh_button.setEnabled(True)
-            self._render()
-            if len(self.rows) > 1:
-                self.summary.setText("{} completed · {} failed. {}".format(
-                    completed, failed,
-                    "See each row's result; failed rows stay checked." if failed else
-                    "Loaded status updated. Check rows again to run another action."
-                ))
+            self.setEnabled(True)
+        if not failures and not skipped:
+            self.accept()
+            return
+        # Only failed Reads remain eligible for retry; completed ones never reload.
+        self.plan = swap.SelectionPlan(failures + skipped)
+        self._overview()
+        messages = [row.status for row in failures] + [
+            "{}: {}".format(row.node.name(), row.error) for row in skipped
+        ]
+        self.result.setText("{} completed · {} failed · {} skipped\n{}".format(
+            completed, len(failures), len(skipped), "\n".join(messages)
+        ))

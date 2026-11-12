@@ -231,6 +231,72 @@ class ReadSwapTests(unittest.TestCase):
             row.apply(True)
         self.assertFalse(self.loads)
 
+    def test_five_single_target_reads_need_no_review_steps(self):
+        rows = [self.module.BatchRow(self.old) for unused in range(5)]
+        plan = self.module.SelectionPlan(rows)
+        self.assertEqual(plan.automatic, rows)
+        self.assertFalse(plan.ready)
+        plan.start(False)
+        self.assertTrue(plan.ready)
+        self.assertIsNone(plan.current)
+        self.assertIs(plan.replace, False)
+        self.assertEqual(len(plan.valid), 5)
+        self.assertFalse(self.loads)
+
+    def test_mixed_selection_cycles_only_the_two_ambiguous_reads(self):
+        rows = [self.module.BatchRow(self.old) for unused in range(5)]
+        for row in rows[3:]:
+            row.candidates.append(repre("exr2", "workingPlate", "exr"))
+        plan = self.module.SelectionPlan(rows)
+        self.assertEqual(plan.automatic, rows[:3])
+        self.assertEqual(plan.choices, rows[3:])
+        plan.start(True)
+        self.assertIs(plan.current, rows[3])
+        plan.current.target_id = "exr2"
+        plan.advance()
+        self.assertIs(plan.current, rows[4])
+        self.assertFalse(plan.ready)
+        plan.advance()
+        self.assertTrue(plan.ready)
+        self.assertIs(plan.replace, True)
+        self.assertEqual(len(plan.valid), 5)
+        self.assertEqual(rows[3].target_id, "exr2")
+        self.assertFalse(self.loads)
+
+    def test_back_keeps_choices_and_allows_changing_shared_action(self):
+        rows = [self.module.BatchRow(self.old) for unused in range(2)]
+        rows[0].candidates.append(repre("exr2", "workingPlate", "exr"))
+        plan = self.module.SelectionPlan(rows)
+        plan.start(True)
+        plan.current.target_id = "exr2"
+        plan.back()
+        self.assertIsNone(plan.replace)
+        self.assertFalse(plan.ready)
+        plan.start(False)
+        self.assertEqual(plan.current.target_id, "exr2")
+        plan.advance()
+        self.assertTrue(plan.ready)
+        self.assertIs(plan.replace, False)
+        self.assertFalse(self.loads)
+
+    def test_single_ambiguous_read_uses_initial_dropdown_without_extra_step(self):
+        row = self.module.BatchRow(self.old)
+        row.candidates.append(repre("exr2", "workingPlate", "exr"))
+        row.target_id = "exr2"
+        plan = self.module.SelectionPlan([row])
+        plan.start(False)
+        self.assertTrue(plan.ready)
+        self.assertIsNone(plan.current)
+        self.assertEqual(plan.valid[0].target_id, "exr2")
+
+    def test_invalid_reads_are_excluded_from_the_shared_action(self):
+        invalid = self.module.BatchRow(Node("Manual"))
+        valid = self.module.BatchRow(self.old)
+        plan = self.module.SelectionPlan([valid, invalid])
+        plan.start(False)
+        self.assertTrue(plan.ready)
+        self.assertEqual(plan.valid, [valid])
+
     def test_partial_load_failure_cleans_up_and_restores_selection(self):
         def fail(*args, **kwargs):
             self.import_read(*args, **kwargs)

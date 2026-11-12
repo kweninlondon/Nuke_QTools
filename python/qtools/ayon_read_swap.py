@@ -162,6 +162,46 @@ class BatchRow:
         return new_read
 
 
+class SelectionPlan:
+    """One shared action, with review steps only for ambiguous Reads."""
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+        self.valid = [row for row in self.rows if not row.error and row.candidates]
+        self.automatic = [row for row in self.valid if len(row.candidates) == 1]
+        self.choices = [row for row in self.valid if len(row.candidates) > 1]
+        self.replace = None
+        self.choice_index = -1
+
+    @property
+    def current(self):
+        if 0 <= self.choice_index < len(self.choices):
+            return self.choices[self.choice_index]
+        return None
+
+    @property
+    def ready(self):
+        return (bool(self.valid) and self.replace is not None
+                and self.choice_index == len(self.choices))
+
+    def start(self, replace):
+        self.replace = replace
+        # A single Read's dropdown is already shown in the initial view.
+        self.choice_index = 0 if len(self.rows) > 1 else len(self.choices)
+
+    def advance(self):
+        if self.current is None:
+            raise RuntimeError("No representation choice is awaiting review.")
+        if self.current.target_id not in {item["id"] for item in self.current.candidates}:
+            raise RuntimeError("Choose a representation first.")
+        self.choice_index += 1
+
+    def back(self):
+        self.choice_index = max(-1, self.choice_index - 1)
+        if self.choice_index == -1:
+            self.replace = None
+
+
 def _connections(nodes):
     return [(node, index, node.input(index))
             for node in nodes for index in range(node.inputs())]
@@ -271,7 +311,7 @@ def load_counterpart(read_node, context, representation, replace):
 
 
 def show_dialog():
-    """Open a retained, modeless batch window for the selected Reads."""
+    """Open a compact selection summary and representation-choice flow."""
     global _WINDOW
     reads = [node for node in nuke.selectedNodes() if node.Class() == "Read"]
     if not reads:

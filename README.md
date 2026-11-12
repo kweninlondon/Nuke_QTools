@@ -257,11 +257,16 @@ the button appearance and actual Nuke evaluation still require that check.
 Launch Nuke through AYON, select one or more AYON-loaded Reads, then choose
 **QTools > Utilities > Switch EXR ↔ MOV (AYON)**. One selected Read opens a
 compact window with the product name, representation and loaded-format status.
-Multiple selected Reads open a persistent batch table showing
-the product name, source Read, target representation, version, and which EXR
-and MOV representations are actually loaded in the scene for that version.
-Check the rows to process. A single target appears as plain text; multiple
-EXR or MOV targets use a dropdown with the first representation selected.
+It closes after a successful action and stays open if loading fails.
+Multiple selected Reads use the same compact window. Reads with one target
+are listed with their product name, source Read and representation. Choose
+**Replace selected Reads** or **Load alongside** once for the whole selection.
+If any Reads have multiple target representations, the window then steps
+through only those Reads, one dropdown at a time. Back preserves choices and
+lets you return to change the action. The last step applies the shared action
+to all valid selected Reads; no scene changes happen during the choice steps.
+With no ambiguous Reads, the chosen action runs immediately. One selected Read
+with multiple targets has its dropdown directly in the initial window.
 
 - **Replace selected Reads** loads through AYON's compatible **Load Clip**
   plugin, reconnects every downstream input (including Viewer inputs), and
@@ -269,12 +274,10 @@ EXR or MOV targets use a dropdown with the first representation selected.
 - **Load alongside** loads a separate Read directly above the original, with
   a clear gap. Further loads stack upward to avoid existing nodes.
 
-The window stays open after both actions. Successful rows are unchecked and
-the loaded-format columns refresh, showing **Both formats loaded** when both
-exist. Replacement updates the row to the new Read so it can be switched back.
-Failures are shown per row without stopping the remaining batch. Use **Refresh
-loaded status** after scene edits or Undo, or **Reload from selection** to
-start a new batch with the graph selection.
+The window closes after a successful operation. Failures and skipped Reads are
+listed without stopping the other loads. Only failed Reads remain eligible
+for retry, so completed Reads are not loaded again. The per-Read view shows
+which EXR and MOV formats are already present in the scene for that version.
 
 AYON supplies the file path, source frame range, slate handling, colorspace and
 tracking metadata. The loader's start-at-workfile option follows the selected
