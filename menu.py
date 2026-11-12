@@ -111,6 +111,11 @@ utilities_menu.addCommand(
 )
 
 utilities_menu.addCommand(
+    "Switch EXR / MOV (AYON)",
+    "from qtools import ayon_read_swap; ayon_read_swap.show_dialog()",
+)
+
+utilities_menu.addCommand(
     "Create Layer Shuffles",
     "from qtools import layer_shuffles; "
     "layer_shuffles.create_layer_shuffles()",

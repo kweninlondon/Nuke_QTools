@@ -252,6 +252,26 @@ Run it in a fresh licensed Nuke session with `Nuke -t <path-to-test>`.
 Local native validation was blocked by the absence of a Nuke render licence;
 the button appearance and actual Nuke evaluation still require that check.
 
+## Switch EXR / MOV (AYON)
+
+Launch Nuke through AYON, select one AYON-loaded Read, then choose **QTools >
+Utilities > Switch EXR / MOV (AYON)**. The tool queries AYON for the opposite
+format on the same product and published version. If several EXR or MOV
+representations exist, choose one by its AYON representation name.
+
+- **Replace selected Read** loads through AYON's compatible **Load Clip**
+  plugin, reconnects every downstream input (including Viewer inputs), and
+  preserves the original Read's name and graph position before deleting it.
+- **Load alongside** loads a separate Read beside the original.
+
+AYON supplies the file path, source frame range, slate handling, colorspace and
+tracking metadata. The loader's start-at-workfile option follows the selected
+Read's frame mode; custom timing edits are not copied between formats. Existing
+downstream retime nodes are retained, and loading does not add another retime
+chain. Reads inside Groups are supported. Untracked/manual Reads must first be
+loaded through AYON. Missing formats, incompatible loaders and failed loads
+leave the source Read in place; failed imports are cleaned up.
+
 ## QuickTime FPS Conform
 
 Select one movie Read node and choose **QTools > Utilities > Conform QuickTime
