@@ -255,11 +255,13 @@ the button appearance and actual Nuke evaluation still require that check.
 ## Switch EXR ↔ MOV (AYON)
 
 Launch Nuke through AYON, select one or more AYON-loaded Reads, then choose
-**QTools > Utilities > Switch EXR ↔ MOV (AYON)**. A persistent batch table shows
+**QTools > Utilities > Switch EXR ↔ MOV (AYON)**. One selected Read opens a
+compact window with the product name, representation and loaded-format status.
+Multiple selected Reads open a persistent batch table showing
 the product name, source Read, target representation, version, and which EXR
 and MOV representations are actually loaded in the scene for that version.
 Check the rows to process. A single target appears as plain text; multiple
-EXR or MOV targets require a choice from a dropdown before running.
+EXR or MOV targets use a dropdown with the first representation selected.
 
 - **Replace selected Reads** loads through AYON's compatible **Load Clip**
   plugin, reconnects every downstream input (including Viewer inputs), and

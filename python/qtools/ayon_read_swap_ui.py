@@ -28,9 +28,27 @@ class ReadSwapWindow(QtWidgets.QDialog):
         font.setBold(True)
         heading.setFont(font)
         layout.addWidget(heading)
-        layout.addWidget(QtWidgets.QLabel(
+        self.instructions = QtWidgets.QLabel(
             "Check the Reads to process. Choose an output where several are available."
-        ))
+        )
+        layout.addWidget(self.instructions)
+        self.single = QtWidgets.QWidget()
+        single_layout = QtWidgets.QVBoxLayout(self.single)
+        single_layout.setContentsMargins(0, 0, 0, 0)
+        self.product_label = QtWidgets.QLabel()
+        self.product_label.setWordWrap(True)
+        self.source_label = QtWidgets.QLabel()
+        single_layout.addWidget(self.product_label)
+        single_layout.addWidget(self.source_label)
+        single_layout.addWidget(QtWidgets.QLabel("Representation to load:"))
+        self.single_choice = QtWidgets.QVBoxLayout()
+        single_layout.addLayout(self.single_choice)
+        self.loaded_label = QtWidgets.QLabel()
+        self.result_label = QtWidgets.QLabel()
+        self.result_label.setWordWrap(True)
+        single_layout.addWidget(self.loaded_label)
+        single_layout.addWidget(self.result_label)
+        layout.addWidget(self.single)
         self.table = QtWidgets.QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels([
             "Use", "Product", "Source Read", "Load representation",
@@ -52,15 +70,17 @@ class ReadSwapWindow(QtWidgets.QDialog):
         self.summary = QtWidgets.QLabel()
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
-        actions = QtWidgets.QHBoxLayout()
-        layout.addLayout(actions)
+        tools = QtWidgets.QHBoxLayout()
+        layout.addLayout(tools)
         self.selection_button = QtWidgets.QPushButton("Reload from selection")
         self.selection_button.clicked.connect(self._reload_selection)
         self.refresh_button = QtWidgets.QPushButton("Refresh loaded status")
         self.refresh_button.clicked.connect(self._render)
-        actions.addWidget(self.selection_button)
-        actions.addWidget(self.refresh_button)
-        actions.addStretch()
+        tools.addWidget(self.selection_button)
+        tools.addWidget(self.refresh_button)
+        tools.addStretch()
+        actions = QtWidgets.QHBoxLayout()
+        layout.addLayout(actions)
         self.replace_button = QtWidgets.QPushButton("Replace selected Reads")
         self.alongside_button = QtWidgets.QPushButton("Load alongside")
         self.replace_button.clicked.connect(lambda: self._run(True))
@@ -74,6 +94,13 @@ class ReadSwapWindow(QtWidgets.QDialog):
 
     def _set_reads(self, reads):
         self.rows = [swap.BatchRow(node) for node in reads]
+        single = len(self.rows) == 1
+        self.single.setVisible(single)
+        self.table.setVisible(not single)
+        self.instructions.setVisible(not single)
+        self.replace_button.setText("Replace selected Read" if single else "Replace selected Reads")
+        self.setMinimumSize(500, 280) if single else self.setMinimumSize(850, 300)
+        self.resize(560, 310) if single else self.resize(1160, 430)
         self._render()
 
     def _reload_selection(self):
@@ -93,6 +120,10 @@ class ReadSwapWindow(QtWidgets.QDialog):
 
     def _render(self):
         nodes = swap.scene_reads()
+        if len(self.rows) == 1:
+            self._render_single(self.rows[0], nodes)
+            self._update_actions()
+            return
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.rows))
@@ -114,7 +145,6 @@ class ReadSwapWindow(QtWidgets.QDialog):
                 self._item(index, 2, row.node.name() if alive else "Read deleted")
                 if len(row.candidates) > 1:
                     combo = QtWidgets.QComboBox()
-                    combo.addItem("Choose a representation…", None)
                     for candidate in row.candidates:
                         combo.addItem("{} ({})".format(
                             candidate["name"], swap._extension(candidate).upper()
@@ -153,6 +183,46 @@ class ReadSwapWindow(QtWidgets.QDialog):
             self.table.blockSignals(False)
         self._update_actions()
 
+    def _render_single(self, row, nodes):
+        alive = row.node in nodes
+        row.checked = alive and not row.error
+        context = row.context
+        product = context["product"]["name"] if context else "Unavailable"
+        self.product_label.setText(product)
+        self.source_label.setText("Read: {}".format(row.node.name()) if alive else "Read deleted")
+        while self.single_choice.count():
+            item = self.single_choice.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if len(row.candidates) > 1:
+            widget = QtWidgets.QComboBox()
+            for candidate in row.candidates:
+                widget.addItem("{} ({})".format(
+                    candidate["name"], swap._extension(candidate).upper()
+                ), candidate["id"])
+            widget.setCurrentIndex(max(0, widget.findData(row.target_id)))
+            widget.currentIndexChanged.connect(
+                lambda unused, r=row, combo=widget: self._choose(r, combo)
+            )
+            widget.setEnabled(row.checked)
+        else:
+            candidate = row.candidates[0] if row.candidates else None
+            widget = QtWidgets.QLabel("{} ({})".format(
+                candidate["name"], swap._extension(candidate).upper()
+            ) if candidate else "Unavailable")
+        self.single_choice.addWidget(widget)
+        loaded = swap.loaded_formats(context, row.representations, nodes) if context else {}
+        self.loaded_label.setText("   ·   ".join(
+            "{}: {}".format(extension.upper(), "Loaded ({})".format(len(loaded[extension]))
+                           if loaded.get(extension) else "Not loaded")
+            for extension in ("exr", "mov")
+        ))
+        both = bool(loaded.get("exr") and loaded.get("mov"))
+        status = row.error or (row.status if alive else "Source Read deleted; reload selection.")
+        if both:
+            status = "Both formats loaded" + (" · " + status if status else "")
+        self.result_label.setText(status)
+
     def _choose(self, row, combo):
         row.target_id = combo.currentData()
         self._update_actions()
@@ -168,6 +238,12 @@ class ReadSwapWindow(QtWidgets.QDialog):
         enabled = bool(checked) and not missing and not self._busy
         self.replace_button.setEnabled(enabled)
         self.alongside_button.setEnabled(enabled)
+        if len(self.rows) == 1:
+            self.summary.setText(
+                "Replace keeps the Read's name, position and connections.\n"
+                "Load alongside places a new Read above it."
+            )
+            return
         self.summary.setText(
             "{} of {} Reads checked{}".format(
                 len(checked), len(self.rows),
@@ -184,6 +260,7 @@ class ReadSwapWindow(QtWidgets.QDialog):
             return
         self._busy = True
         self.table.setEnabled(False)
+        self.single.setEnabled(False)
         self.selection_button.setEnabled(False)
         self.refresh_button.setEnabled(False)
         self._update_actions()
@@ -209,11 +286,13 @@ class ReadSwapWindow(QtWidgets.QDialog):
         finally:
             self._busy = False
             self.table.setEnabled(True)
+            self.single.setEnabled(True)
             self.selection_button.setEnabled(True)
             self.refresh_button.setEnabled(True)
             self._render()
-            self.summary.setText("{} completed · {} failed. {}".format(
-                completed, failed,
-                "See each row's result; failed rows stay checked." if failed else
-                "Loaded status updated. Check rows again to run another action."
-            ))
+            if len(self.rows) > 1:
+                self.summary.setText("{} completed · {} failed. {}".format(
+                    completed, failed,
+                    "See each row's result; failed rows stay checked." if failed else
+                    "Loaded status updated. Check rows again to run another action."
+                ))

@@ -134,7 +134,7 @@ class BatchRow:
 
     def _set_candidates(self):
         self.candidates = counterpart_candidates(self.context, self.representations)
-        self.target_id = self.candidates[0]["id"] if len(self.candidates) == 1 else None
+        self.target_id = self.candidates[0]["id"] if self.candidates else None
         if not self.candidates:
             self.error = "No opposite-format representation on this version."
 

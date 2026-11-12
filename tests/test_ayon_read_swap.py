@@ -181,17 +181,15 @@ class ReadSwapTests(unittest.TestCase):
         self.assertIs(row.node, back)
         self.assertEqual(back.container["representation"], "mov")
 
-    def test_batch_multiple_options_require_a_choice_in_both_directions(self):
+    def test_batch_multiple_options_default_to_an_actual_representation(self):
         self.siblings.extend([repre("exr2", "workingPlate", "exr"),
                               repre("mov2", "prores", "mov")])
         row = self.module.BatchRow(self.old)
-        self.assertIsNone(row.target_id)
-        with self.assertRaisesRegex(RuntimeError, "Choose"):
-            row.apply(True)
+        self.assertEqual(row.target_id, "exr")
         row.target_id = "exr2"
         row.apply(True)
         self.assertEqual({item["id"] for item in row.candidates}, {"mov", "mov2"})
-        self.assertIsNone(row.target_id)
+        self.assertIn(row.target_id, {"mov", "mov2"})
 
     def test_batch_alongside_reports_both_formats_from_scene(self):
         row = self.module.BatchRow(self.old)
