@@ -12,6 +12,9 @@
 #
 # If the selected source is a labelled Dot:
 #   - Label: To Dot Label
+#   - For a From Dot with existing branches, insert the stamp into the tree:
+#     above a sole destination, or below the Dot when sharing several branches.
+#   - Existing PostageStamp and Viewer references stay on the source Dot.
 #
 #
 # NOTHING SELECTED
@@ -819,6 +822,59 @@ def _create_postage_stamps(sources):
 
     nuke.zoomToFitSelected()
     return created_stamps
+
+
+def _create_stamp_in_source_dot_tree(source):
+    """Insert a From Dot's stamp into its existing downstream connections."""
+    label = _clean_text(source["label"].value())
+    if not re.match(r"^from(?:\s|$)", label, re.I):
+        return _create_postage_stamp(source)
+
+    # Existing connector stamps and Viewers are references, not branches to
+    # insert into. Capture connections before creating the new node.
+    connections = [
+        (node, index) for node, index in _outgoing_connections(source)
+        if node.Class() not in {"PostageStamp", "Viewer"}
+    ]
+    if not connections:
+        return _create_postage_stamp(source)
+
+    undo = nuke.Undo()
+    undo.begin("Insert Postage Stamp Connector")
+    stamp = None
+    rewired = []
+    try:
+        stamp = _create_postage_stamp(source, frame_new=False)
+        if stamp is None:
+            return None
+
+        if len(connections) == 1:
+            destination = connections[0][0]
+            target_x = destination.xpos() + int(
+                (destination.screenWidth() - stamp.screenWidth()) / 2
+            )
+            target_y = destination.ypos() - stamp.screenHeight() - 12
+        else:
+            target_x = source.xpos() + int(
+                (source.screenWidth() - stamp.screenWidth()) / 2
+            )
+            target_y = source.ypos() + source.screenHeight() + 40
+
+        stamp.setXYpos(target_x, target_y)
+        for destination, index in connections:
+            destination.setInput(index, stamp)
+            rewired.append((destination, index))
+        nuke.zoomToFitSelected()
+        return stamp
+    except Exception as error:
+        for destination, index in reversed(rewired):
+            destination.setInput(index, source)
+        if stamp is not None:
+            nuke.delete(stamp)
+        nuke.message("The connector could not be inserted.\n\n{}".format(error))
+        return None
+    finally:
+        undo.end()
 
 
 def _disconnected_targets_matching_source(source, excluded_nodes=None):
@@ -2139,7 +2195,7 @@ def create_or_retarget_postage_stamp():
         if reconnected:
             return reconnected
 
-        return _create_postage_stamp(selected_nodes[0])
+        return _create_stamp_in_source_dot_tree(selected_nodes[0])
 
     if _all_selected_are_labelled_source_dots(selected_nodes):
         undo = nuke.Undo()

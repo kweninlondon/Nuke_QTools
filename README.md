@@ -349,6 +349,13 @@ original in-tool attribution intact.
 
 ## Postage stamp connector naming rules
 
+With a **From** Dot selected, **Alt+Y** inserts a PostageStamp into its existing
+branches. A single connection gets the stamp directly above its destination;
+multiple connections share a stamp centered below the From Dot. Existing
+PostageStamp and Viewer references remain connected to the From Dot. With no
+eligible branches, the tool creates a separate connector as before. Insertion
+is one undo step.
+
 In the postage stamp tool's **Enter Dot name** dialog, choose **Edit rules...**
 to configure filename searches, prefixes, removal masks, and colours.
 To remove shared text such as a project code from every proposed name, add a
