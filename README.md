@@ -347,6 +347,22 @@ The experimental menu also includes **Planar Projection (Vit Sedlacek / Jed
 Smith)**, bundled from Jed Smith's published PlanarProjection gist with its
 original in-tool attribution intact.
 
+## Postage stamp connector naming rules
+
+In the postage stamp tool's **Enter Dot name** dialog, choose **Edit rules...**
+to configure filename searches, prefixes, removal masks, and colours.
+To remove shared text such as a project code from every proposed name, add a
+rule with **Name search** and **Prefix** empty and enter the code in **Remove**.
+These global removals run first, before filename searches and the matched
+rule's removals, regardless of their position in the table. Prefix and Colour
+are ignored for global rules. Multiple global rows are applied top to bottom.
+
+Separate removal masks with commas; each `#` matches one digit, and matching
+ignores case. For example, a global Remove of `SHOW_, _v###` removes the project
+code and version from both `SHOW_plate_main_v001` and
+`SHOW_render_beauty_v002`, without repeating those masks in the plate and render
+rules. Global removals also apply when no filename rule matches.
+
 ## Create AYON Writes
 
 When Nuke is launched through AYON, select one or more native Read or Write

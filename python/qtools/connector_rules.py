@@ -82,9 +82,10 @@ def _terms(rule):
 
 def matching_rule(text, items=None):
     """Return the first rule whose search term occurs in text."""
-    text = str(text or "").lower()
+    items = rules() if items is None else items
+    text = apply_global_removals(text, items).lower()
 
-    for rule in items or rules():
+    for rule in items:
         if any(term in text for term in _terms(rule)):
             return rule
 
@@ -94,8 +95,8 @@ def matching_rule(text, items=None):
 def prefix_rule(prefix, items=None):
     prefix = str(prefix or "").strip().lower()
 
-    for rule in items or rules():
-        if rule.get("prefix", "").strip().lower() == prefix:
+    for rule in rules() if items is None else items:
+        if _terms(rule) and rule.get("prefix", "").strip().lower() == prefix:
             return rule
 
     return None
@@ -132,6 +133,20 @@ def remove_patterns(value, patterns):
     return result
 
 
+def apply_global_removals(value, items=None):
+    """Apply every blank-search removal rule before specific rules."""
+    result = str(value or "")
+    for rule in rules() if items is None else items:
+        if not _terms(rule):
+            result = remove_patterns(result, rule.get("remove", ""))
+    return result
+
+
+def apply_name_removals(value, removals=""):
+    """Apply the global first pass, then the selected rule's masks."""
+    return remove_patterns(apply_global_removals(value), removals)
+
+
 def compose_name(
     prefix,
     name,
@@ -140,7 +155,7 @@ def compose_name(
     replace_underscores=True
 ):
     prefix = " ".join(str(prefix or "").split()).upper()
-    name = remove_patterns(name, removals)
+    name = apply_name_removals(name, removals)
     if replace_underscores:
         name = str(name).replace("_", " ")
     name = clean_filename_text(name) if remove_special else " ".join(
@@ -178,7 +193,9 @@ class RuleEditorDialog(QtWidgets.QDialog):
         layout.addWidget(QtWidgets.QLabel(
             "Rules are checked from top to bottom. Separate alternative "
             "filename searches or removal masks with commas. In Remove, "
-            "each # matches one digit."
+            "each # matches one digit.\n"
+            "Leave Name search blank to apply Remove to every name first; "
+            "Prefix and Colour are ignored for these global rules."
         ))
         self.table = QtWidgets.QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
@@ -325,7 +342,7 @@ class RuleEditorDialog(QtWidgets.QDialog):
             prefix = prefix_item.text().strip().upper() if prefix_item else ""
             remove = remove_item.text().strip() if remove_item else ""
 
-            if search and prefix:
+            if (search and prefix) or (not _terms({"search": search}) and remove):
                 result.append({
                     "search": search,
                     "prefix": prefix,

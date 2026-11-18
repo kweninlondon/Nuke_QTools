@@ -1034,6 +1034,7 @@ class DotNameDialog(QtWidgets.QDialog):
         self.prefix_field.addItem("None")
         self.prefix_field.addItems([
             rule["prefix"] for rule in connector_rules.rules()
+            if rule.get("search", "").strip() and rule["prefix"]
         ])
         self.prefix_field.setCurrentText("None")
         self.prefix_field.setMinimumWidth(150)
@@ -1126,7 +1127,7 @@ class DotNameDialog(QtWidgets.QDialog):
         frame_name = _read_frame_name(self._source)
         rule = connector_rules.matching_rule(frame_name)
         removals = rule.get("remove", "") if rule is not None else ""
-        frame_name = connector_rules.remove_patterns(frame_name, removals)
+        frame_name = connector_rules.apply_name_removals(frame_name, removals)
         if self.replace_underscores_checkbox.isChecked():
             frame_name = frame_name.replace("_", " ")
         self.name_field.setText(frame_name.lstrip())
@@ -1150,6 +1151,7 @@ class DotNameDialog(QtWidgets.QDialog):
         self.prefix_field.addItem("None")
         self.prefix_field.addItems([
             rule["prefix"] for rule in connector_rules.rules()
+            if rule.get("search", "").strip() and rule["prefix"]
         ])
         self.prefix_field.setCurrentText(current)
         self._apply_rule_removals()
@@ -1158,7 +1160,7 @@ class DotNameDialog(QtWidgets.QDialog):
         """Apply the chosen prefix rule's masks to the visible proposal."""
         rule = connector_rules.prefix_rule(self._selected_prefix())
         removals = rule.get("remove", "") if rule is not None else ""
-        text = connector_rules.remove_patterns(
+        text = connector_rules.apply_name_removals(
             self.name_field.text(), removals
         )
         if self.replace_underscores_checkbox.isChecked():
@@ -1238,6 +1240,12 @@ def _create_named_read_dot(source):
 
     if "label" in dot.knobs():
         dot["label"].setValue(_from_label(dot_name))
+
+    if (
+        dialog._selected_prefix().upper() == "CAMERA"
+        or source.Class() in {"Camera", "Camera2", "Camera3"}
+    ) and "note_font_size" in dot.knobs():
+        dot["note_font_size"].setValue(20)
 
     connector_rules.set_node_colour(dot, dialog.dot_colour())
 
